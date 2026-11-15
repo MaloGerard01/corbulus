@@ -1,4 +1,4 @@
-import type { FogState, GridConfig, Player } from './game-state.model';
+import type { Camera, FogState, GridConfig, Player } from './game-state.model';
 
 /**
  * Projection de l'état envoyée au plateau.
@@ -7,6 +7,7 @@ import type { FogState, GridConfig, Player } from './game-state.model';
 export interface BoardView {
   mapAssetId: string | null;
   grid: GridConfig;
+  camera: Camera;
   fog: FogState;
   players: Player[];
 }

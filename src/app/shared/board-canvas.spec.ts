@@ -9,6 +9,7 @@ class FakeRenderer implements BoardRendererLike {
   ready = false;
   readonly render = vi.fn();
   readonly setMapImage = vi.fn();
+  readonly setFrame = vi.fn();
   readonly playEffect = vi.fn();
   readonly destroy = vi.fn();
 
@@ -25,6 +26,7 @@ function boardView(mapAssetId: string | null): BoardView {
   return {
     mapAssetId,
     grid: { cols: 24, rows: 14, mapCellPx: 100, offsetX: 0, offsetY: 0 },
+    camera: { x: 12, y: 7 },
     fog: { enabled: false, ops: [] },
     players: [],
   };

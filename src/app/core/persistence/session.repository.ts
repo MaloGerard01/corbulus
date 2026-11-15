@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 
-import { createInitialGameState, type GameState } from '../models/game-state.model';
+import { createInitialGameState, gridCenter, type GameState } from '../models/game-state.model';
 import { db } from './db';
 
 const CURRENT_SESSION_ID = 'current';
@@ -14,10 +14,13 @@ export class SessionRepository {
     // Fusion avec l'état initial : une sauvegarde faite avant l'ajout
     // d'un nouveau champ dans GameState (ou dans un sous-objet) reste chargeable.
     const initial = createInitialGameState();
+    const grid = { ...initial.grid, ...record.state.grid };
     return {
       ...initial,
       ...record.state,
-      grid: { ...initial.grid, ...record.state.grid },
+      grid,
+      // Absente des sauvegardes antérieures à l'ajout de la caméra.
+      camera: record.state.camera ?? gridCenter(grid),
     };
   }
 

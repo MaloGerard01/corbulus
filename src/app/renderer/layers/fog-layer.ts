@@ -5,6 +5,9 @@ import { firstNewFogOp, fogOpKey } from '../fog-ops';
 import type { RenderStyle } from '../render-style';
 import { traceShape } from '../shapes';
 
+/** Côté maximal de la texture, en pixels physiques : certaines cartes graphiques refusent au-delà. */
+const MAX_TEXTURE_PX = 4096;
+
 /**
  * Brouillard de guerre : les opérations sont dessinées dans l'ordre dans une
  * texture, en partant d'un calque entièrement noir. `reveal` efface (mode
@@ -24,6 +27,7 @@ export class FogLayer {
   private stale = true;
   private cols = 0;
   private rows = 0;
+  /** Taille d'une case dans la texture (≤ taille à l'écran, voir MAX_TEXTURE_PX). */
   private cellPx = 0;
 
   constructor(
@@ -56,25 +60,32 @@ export class FogLayer {
     this.texture?.destroy(true);
   }
 
-  /** Une texture à la résolution de l'écran, recréée si la grille ou la taille des cases change. */
+  /**
+   * Une texture à la résolution de l'écran (plafonnée), recréée si la grille
+   * ou la taille des cases change.
+   */
   private ensureTexture(grid: GridConfig, cellPx: number): void {
     const key = `${grid.cols}x${grid.rows}@${cellPx}`;
     if (key === this.textureKey) return;
     this.textureKey = key;
     this.cols = grid.cols;
     this.rows = grid.rows;
-    this.cellPx = cellPx;
+
+    // En mode `cover`, la grille dépasse de l'écran : sa texture peut devenir
+    // énorme. Au-delà du plafond, on sacrifie un peu de netteté des bords.
+    const maxCssPx = MAX_TEXTURE_PX / this.renderer.resolution;
+    this.cellPx = Math.min(cellPx, maxCssPx / grid.cols, maxCssPx / grid.rows);
 
     this.texture?.destroy(true);
     this.texture = RenderTexture.create({
-      width: Math.ceil(grid.cols * cellPx),
-      height: Math.ceil(grid.rows * cellPx),
+      width: Math.ceil(grid.cols * this.cellPx),
+      height: Math.ceil(grid.rows * this.cellPx),
       resolution: this.renderer.resolution,
       antialias: true,
     });
     this.view.texture = this.texture;
     // La texture est en pixels, le calque en cases.
-    this.view.scale.set(1 / cellPx);
+    this.view.scale.set(1 / this.cellPx);
     this.stale = true;
   }
 

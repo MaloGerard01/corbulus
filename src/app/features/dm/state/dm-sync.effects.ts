@@ -1,8 +1,8 @@
-import { Injectable, effect, inject } from '@angular/core';
+import { Injectable, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { debounceTime, filter } from 'rxjs';
 
-import type { BoardEvent } from '../../../core/models/sync-message.model';
+import type { BoardEvent, BoardViewport } from '../../../core/models/sync-message.model';
 import { AssetRepository } from '../../../core/persistence/asset.repository';
 import { SessionRepository } from '../../../core/persistence/session.repository';
 import { SyncService } from '../../../core/sync/sync.service';
@@ -22,6 +22,13 @@ export class DmSyncEffects {
   /** Empêche d'écraser la sauvegarde avec l'état vide avant la restauration. */
   private restored = false;
 
+  private readonly _boardViewport = signal<BoardViewport | null>(null);
+  /**
+   * Taille de la fenêtre du plateau (la TV), `null` tant qu'il ne s'est pas
+   * manifesté. Information sur la fenêtre, pas sur la partie : non persistée.
+   */
+  readonly boardViewport = this._boardViewport.asReadonly();
+
   constructor() {
     // Chaque changement visible → plateau
     effect(() => {
@@ -35,6 +42,14 @@ export class DmSyncEffects {
       .subscribe(() => {
         this.sync.send({ type: 'state', payload: this.store.boardView() });
       });
+
+    // Taille de la TV : le plateau l'envoie à son démarrage et à chaque
+    // redimensionnement. S'il est déjà ouvert, on la lui redemande.
+    this.sync
+      .on('viewport')
+      .pipe(takeUntilDestroyed())
+      .subscribe((message) => this._boardViewport.set(message.payload));
+    this.sync.send({ type: 'viewport-request' });
 
     // Sauvegarde automatique
     toObservable(this.store.state)

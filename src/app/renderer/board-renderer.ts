@@ -4,16 +4,18 @@ import type { BoardView } from '../core/models/board-view.model';
 import type { BoardEvent } from '../core/models/sync-message.model';
 import { EffectsLayer } from './layers/effects-layer';
 import { FogLayer } from './layers/fog-layer';
+import { FrameLayer } from './layers/frame-layer';
 import { GridLayer } from './layers/grid-layer';
 import { MapLayer, type MapImageSource } from './layers/map-layer';
-import { computeLayout } from './layout';
-import { RENDER_STYLES, type RenderMode } from './render-style';
+import { computeLayout, type CellRect } from './layout';
+import { RENDER_STYLES, type RenderMode, type RenderStyle } from './render-style';
 
 interface Layers {
   map: MapLayer;
   grid: GridLayer;
   fog: FogLayer;
   effects: EffectsLayer;
+  frame: FrameLayer;
 }
 
 /**
@@ -32,9 +34,13 @@ export class BoardRenderer {
   private layers: Layers | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private view: BoardView | null = null;
+  private frame: CellRect | null = null;
   private destroyed = false;
+  private readonly style: RenderStyle;
 
-  constructor(private readonly mode: RenderMode) {}
+  constructor(mode: RenderMode) {
+    this.style = RENDER_STYLES[mode];
+  }
 
   get ready(): boolean {
     return this.layers !== null;
@@ -45,7 +51,7 @@ export class BoardRenderer {
    * et dimensionné par son parent : le canvas en prend toute la place.
    */
   async init(host: HTMLElement): Promise<void> {
-    const style = RENDER_STYLES[this.mode];
+    const style = this.style;
 
     await this.app.init({
       width: Math.max(1, host.clientWidth),
@@ -77,9 +83,16 @@ export class BoardRenderer {
       grid: new GridLayer(style),
       fog: new FogLayer(this.app.renderer, style),
       effects: new EffectsLayer(this.app.ticker, this.world),
+      frame: new FrameLayer(style),
     };
-    // Ordre d'empilement : carte, grille, brouillard, effets.
-    this.world.addChild(layers.map.view, layers.grid.view, layers.fog.view, layers.effects.view);
+    // Ordre d'empilement : carte, grille, brouillard, effets, cadre de la TV.
+    this.world.addChild(
+      layers.map.view,
+      layers.grid.view,
+      layers.fog.view,
+      layers.effects.view,
+      layers.frame.view,
+    );
     this.app.stage.addChild(this.world);
     this.layers = layers;
 
@@ -109,6 +122,12 @@ export class BoardRenderer {
     this.layers?.effects.play(event);
   }
 
+  /** Zone visible sur la TV, encadrée dans l'aperçu du MJ (`null` : pas de cadre). */
+  setFrame(frame: CellRect | null): void {
+    this.frame = frame;
+    this.draw();
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -117,8 +136,9 @@ export class BoardRenderer {
     // Si l'init est en cours, c'est elle qui détruira l'application à la fin.
     if (!this.layers) return;
 
-    const { map, grid, fog, effects } = this.layers;
+    const { map, grid, fog, effects, frame } = this.layers;
     this.layers = null;
+    frame.destroy();
     effects.destroy();
     fog.destroy();
     grid.destroy();
@@ -138,12 +158,13 @@ export class BoardRenderer {
     if (!this.layers || !view) return;
 
     const { width, height } = this.app.screen;
-    const layout = computeLayout(width, height, view.grid);
+    const layout = computeLayout(width, height, view.grid, view.camera, this.style.fit);
     this.world.position.set(layout.originX, layout.originY);
     this.world.scale.set(layout.cellPx);
 
     this.layers.map.update(view.grid);
     this.layers.grid.update(view.grid, layout.cellPx);
     this.layers.fog.update(view.fog, view.grid, layout.cellPx);
+    this.layers.frame.update(this.frame, view.grid, layout.cellPx);
   }
 }

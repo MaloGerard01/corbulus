@@ -3,6 +3,8 @@ import { Injectable, computed, signal } from '@angular/core';
 import {
   SEATS,
   createInitialGameState,
+  gridCenter,
+  type Camera,
   type FogOp,
   type GameState,
   type GridConfig,
@@ -38,6 +40,7 @@ export class GameStore {
   readonly players = computed(() => this._state().players);
   readonly mapAssetId = computed(() => this._state().mapAssetId);
   readonly grid = computed(() => this._state().grid);
+  readonly camera = computed(() => this._state().camera);
   readonly fog = computed(() => this._state().fog);
   readonly dmNotes = computed(() => this._state().dmNotes);
   readonly boardView = computed(() => toBoardView(this._state()), {
@@ -82,19 +85,29 @@ export class GameStore {
 
   /**
    * Change de carte (ou la retire avec `null`). Les zones révélées de
-   * l'ancienne carte n'ont plus de sens : le brouillard repart de zéro.
+   * l'ancienne carte n'ont plus de sens : le brouillard repart de zéro,
+   * et la TV se recentre.
    */
   setMap(mapAssetId: string | null, grid?: Partial<GridConfig>): void {
-    this.mutate((s) => ({
-      ...s,
-      mapAssetId,
-      grid: grid ? normalizeGrid({ ...s.grid, ...grid }) : s.grid,
-      fog: { ...s.fog, ops: [] },
-    }));
+    this.mutate((s) => {
+      const nextGrid = grid ? normalizeGrid({ ...s.grid, ...grid }) : s.grid;
+      return {
+        ...s,
+        mapAssetId,
+        grid: nextGrid,
+        camera: gridCenter(nextGrid),
+        fog: { ...s.fog, ops: [] },
+      };
+    });
   }
 
   updateGrid(patch: Partial<GridConfig>): void {
     this.mutate((s) => ({ ...s, grid: normalizeGrid({ ...s.grid, ...patch }) }));
+  }
+
+  /** Déplace la zone affichée sur la TV. Le renderer la ramène de toute façon dans la grille. */
+  setCamera(camera: Camera): void {
+    this.mutate((s) => ({ ...s, camera }));
   }
 
   // --- Brouillard ----------------------------------------------------------

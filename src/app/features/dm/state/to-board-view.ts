@@ -6,6 +6,7 @@ export function toBoardView(state: GameState): BoardView {
   return {
     mapAssetId: state.mapAssetId,
     grid: state.grid,
+    camera: state.camera,
     fog: state.fog,
     players: state.players,
   };
@@ -21,6 +22,7 @@ export function sameBoardView(a: BoardView, b: BoardView): boolean {
   return (
     a.mapAssetId === b.mapAssetId &&
     a.grid === b.grid &&
+    a.camera === b.camera &&
     a.fog === b.fog &&
     a.players === b.players
   );

@@ -1,20 +1,52 @@
 import type { FogOp } from '../core/models/game-state.model';
 import { firstNewFogOp, fogOpKey } from './fog-ops';
-import { computeLayout } from './layout';
+import { computeLayout, visibleCells } from './layout';
 
 describe('computeLayout', () => {
-  it('ajuste la grille sur la largeur et la centre verticalement', () => {
-    const layout = computeLayout(1000, 1000, { cols: 10, rows: 5 });
-    expect(layout).toEqual({ cellPx: 100, originX: 0, originY: 250 });
+  const anywhere = { x: 0, y: 0 };
+
+  it('contain : ajuste la grille sur la largeur et la centre verticalement', () => {
+    const layout = computeLayout(1000, 1000, { cols: 10, rows: 5 }, anywhere, 'contain');
+    expect(layout).toMatchObject({ cellPx: 100, originX: 0, originY: 250 });
   });
 
-  it('ajuste la grille sur la hauteur et la centre horizontalement', () => {
-    const layout = computeLayout(1920, 1080, { cols: 10, rows: 10 });
-    expect(layout).toEqual({ cellPx: 108, originX: 420, originY: 0 });
+  it('contain : ajuste la grille sur la hauteur et la centre horizontalement', () => {
+    const layout = computeLayout(1920, 1080, { cols: 10, rows: 10 }, anywhere, 'contain');
+    expect(layout).toMatchObject({ cellPx: 108, originX: 420, originY: 0 });
+  });
+
+  it("cover : la grille couvre tout l'écran, centrée sur la caméra", () => {
+    // Écran 2:1, grille carrée : la moitié des rangées dépasse.
+    const layout = computeLayout(2000, 1000, { cols: 20, rows: 20 }, { x: 10, y: 10 }, 'cover');
+    expect(layout).toEqual({ cellPx: 100, originX: 0, originY: -500, camera: { x: 10, y: 10 } });
+  });
+
+  it("cover : la caméra est ramenée pour que l'écran ne sorte pas de la grille", () => {
+    const grid = { cols: 20, rows: 20 };
+    expect(computeLayout(2000, 1000, grid, { x: 3, y: 2 }, 'cover')).toMatchObject({
+      originY: 0,
+      camera: { x: 10, y: 5 },
+    });
+    expect(computeLayout(2000, 1000, grid, { x: 10, y: 99 }, 'cover')).toMatchObject({
+      originY: -1000,
+      camera: { x: 10, y: 15 },
+    });
   });
 
   it('ne produit pas de taille négative pour un canvas vide', () => {
-    expect(computeLayout(0, 0, { cols: 10, rows: 10 }).cellPx).toBe(0);
+    expect(computeLayout(0, 0, { cols: 10, rows: 10 }, anywhere, 'contain').cellPx).toBe(0);
+  });
+});
+
+describe('visibleCells', () => {
+  it('donne la partie de la grille affichée en mode cover', () => {
+    const rect = visibleCells(2000, 1000, { cols: 20, rows: 20 }, { x: 10, y: 12 }, 'cover');
+    expect(rect).toEqual({ x: 0, y: 7, w: 20, h: 10 });
+  });
+
+  it('se limite à la grille quand elle tient en entier', () => {
+    const rect = visibleCells(1000, 1000, { cols: 10, rows: 5 }, { x: 0, y: 0 }, 'contain');
+    expect(rect).toEqual({ x: 0, y: 0, w: 10, h: 5 });
   });
 });
 

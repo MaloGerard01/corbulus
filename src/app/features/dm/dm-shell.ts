@@ -1,7 +1,7 @@
 import { JsonPipe } from '@angular/common';
 import { Component, inject } from '@angular/core';
 
-import { BoardCanvas } from '../../shared/board-canvas';
+import { BoardPreview } from './board-preview/board-preview';
 import { MapPanel } from './map-panel/map-panel';
 import { PlayersPanel } from './players-panel/players-panel';
 import { GameStore } from './state/game.store';
@@ -10,7 +10,7 @@ const BOARD_WINDOW_NAME = 'table-jdr-board';
 
 @Component({
   selector: 'app-dm-shell',
-  imports: [BoardCanvas, JsonPipe, MapPanel, PlayersPanel],
+  imports: [BoardPreview, JsonPipe, MapPanel, PlayersPanel],
   host: { class: 'block min-h-screen px-6 py-4' },
   template: `
     <header class="mb-4 flex items-center justify-between">
@@ -24,21 +24,7 @@ const BOARD_WINDOW_NAME = 'table-jdr-board';
     </header>
 
     <main class="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] items-start gap-4">
-      <section class="panel col-span-full">
-        <header class="mb-3 flex items-center justify-between">
-          <h2 class="text-lg font-semibold">Aperçu du plateau</h2>
-          <label class="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              class="size-4 accent-accent"
-              [checked]="store.fog().enabled"
-              (change)="onFogToggle($event)"
-            />
-            Brouillard
-          </label>
-        </header>
-        <app-board-canvas class="h-[50vh]" mode="dm" [view]="store.boardView()" />
-      </section>
+      <app-board-preview class="col-span-full" />
 
       <app-players-panel />
 
@@ -80,9 +66,5 @@ export class DmShell {
 
   protected onNotesInput(event: Event): void {
     this.store.setDmNotes((event.target as HTMLTextAreaElement).value);
-  }
-
-  protected onFogToggle(event: Event): void {
-    this.store.setFogEnabled((event.target as HTMLInputElement).checked);
   }
 }

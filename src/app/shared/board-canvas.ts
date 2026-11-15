@@ -15,12 +15,13 @@ import type { BoardView } from '../core/models/board-view.model';
 import type { BoardEvent } from '../core/models/sync-message.model';
 import { AssetRepository } from '../core/persistence/asset.repository';
 import { BoardRenderer } from '../renderer/board-renderer';
+import type { CellRect } from '../renderer/layout';
 import type { RenderMode } from '../renderer/render-style';
 
 /** Ce que le composant utilise du renderer. */
 export type BoardRendererLike = Pick<
   BoardRenderer,
-  'ready' | 'init' | 'render' | 'setMapImage' | 'playEffect' | 'destroy'
+  'ready' | 'init' | 'render' | 'setMapImage' | 'setFrame' | 'playEffect' | 'destroy'
 >;
 
 /** Remplaçable dans les tests : jsdom n'a pas de WebGL. */
@@ -45,6 +46,8 @@ export class BoardCanvas {
   readonly view = input<BoardView | null>(null);
   /** Lu une seule fois, à la création du renderer. */
   readonly mode = input<RenderMode>('board');
+  /** Zone à encadrer (aperçu MJ : ce que voit la TV), en cases. */
+  readonly frame = input<CellRect | null>(null);
 
   private readonly _ready = signal(false);
   /** L'init de Pixi 8 est asynchrone : rien n'est dessiné avant. */
@@ -78,6 +81,11 @@ export class BoardCanvas {
     effect(() => {
       const view = this.view();
       if (this._ready() && view) this.renderer?.render(view);
+    });
+
+    effect(() => {
+      const frame = this.frame();
+      if (this._ready()) this.renderer?.setFrame(frame);
     });
 
     effect(() => {

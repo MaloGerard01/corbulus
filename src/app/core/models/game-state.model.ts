@@ -50,11 +50,25 @@ export interface GridConfig {
   offsetY: number;
 }
 
+/**
+ * Centre de la zone affichée sur la TV, en cases. Le renderer le ramène dans
+ * la grille : inutile (et impossible côté MJ) de connaître l'écran pour le borner.
+ */
+export interface Camera {
+  x: number;
+  y: number;
+}
+
+export function gridCenter(grid: Pick<GridConfig, 'cols' | 'rows'>): Camera {
+  return { x: grid.cols / 2, y: grid.rows / 2 };
+}
+
 /** Source de vérité de la partie. N'existe que côté MJ. */
 export interface GameState {
   revision: number;
   mapAssetId: string | null;
   grid: GridConfig;
+  camera: Camera;
   fog: FogState;
   players: Player[];
   /** Jamais envoyé au plateau. */
@@ -62,10 +76,12 @@ export interface GameState {
 }
 
 export function createInitialGameState(): GameState {
+  const grid: GridConfig = { cols: 24, rows: 14, mapCellPx: 100, offsetX: 0, offsetY: 0 };
   return {
     revision: 0,
     mapAssetId: null,
-    grid: { cols: 24, rows: 14, mapCellPx: 100, offsetX: 0, offsetY: 0 },
+    grid,
+    camera: gridCenter(grid),
     fog: { enabled: false, ops: [] },
     players: [],
     dmNotes: '',

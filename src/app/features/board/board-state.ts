@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { map } from 'rxjs';
+import { debounceTime, fromEvent, map, merge, startWith } from 'rxjs';
 
 import type { BoardView } from '../../core/models/board-view.model';
 import { SyncService } from '../../core/sync/sync.service';
@@ -22,5 +22,16 @@ export class BoardState {
     // Si la vue MJ est déjà ouverte, elle répond avec l'état complet.
     // Sinon, elle l'enverra d'elle-même à son démarrage.
     this.sync.send({ type: 'hello' });
+
+    // Le MJ a besoin de la taille de la TV pour encadrer la zone visible
+    // dans son aperçu. Le plateau occupe toute la fenêtre.
+    merge(fromEvent(window, 'resize').pipe(debounceTime(100)), this.sync.on('viewport-request'))
+      .pipe(startWith(null), takeUntilDestroyed())
+      .subscribe(() => {
+        this.sync.send({
+          type: 'viewport',
+          payload: { width: window.innerWidth, height: window.innerHeight },
+        });
+      });
   }
 }

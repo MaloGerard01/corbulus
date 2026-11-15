@@ -48,6 +48,12 @@ describe('GameStore', () => {
     expect(store.fog()).toEqual({ enabled: true, ops: [] });
   });
 
+  it('recentre la TV sur la nouvelle carte', () => {
+    store.setCamera({ x: 1, y: 1 });
+    store.setMap('carte-1', { cols: 30, rows: 20 });
+    expect(store.boardView().camera).toEqual({ x: 15, y: 10 });
+  });
+
   it('borne les réglages de grille invalides', () => {
     store.updateGrid({ cols: 0, rows: 999.6, mapCellPx: -5, offsetX: Number.NaN });
     expect(store.grid()).toEqual({ cols: 1, rows: 200, mapCellPx: 1, offsetX: 0, offsetY: 0 });
