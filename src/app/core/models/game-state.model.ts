@@ -51,16 +51,23 @@ export interface GridConfig {
 }
 
 /**
- * Centre de la zone affichée sur la TV, en cases. Le renderer le ramène dans
- * la grille : inutile (et impossible côté MJ) de connaître l'écran pour le borner.
+ * Zone affichée sur la TV. Le renderer la ramène dans la grille : inutile
+ * (et impossible côté MJ) de connaître l'écran pour la borner.
  */
 export interface Camera {
+  /** Centre de la zone, en cases. */
   x: number;
   y: number;
+  /**
+   * 1 : la carte couvre juste l'écran. 2 : cases deux fois plus grandes,
+   * deux fois moins de cases visibles (mode « Précis » de l'aperçu MJ).
+   */
+  zoom: number;
 }
 
-export function gridCenter(grid: Pick<GridConfig, 'cols' | 'rows'>): Camera {
-  return { x: grid.cols / 2, y: grid.rows / 2 };
+/** Caméra centrée sur la grille, sans zoom. */
+export function centeredCamera(grid: Pick<GridConfig, 'cols' | 'rows'>): Camera {
+  return { x: grid.cols / 2, y: grid.rows / 2, zoom: 1 };
 }
 
 /** Source de vérité de la partie. N'existe que côté MJ. */
@@ -69,6 +76,11 @@ export interface GameState {
   mapAssetId: string | null;
   grid: GridConfig;
   camera: Camera;
+  /**
+   * Mode « Précis » de l'aperçu MJ : la zone affichée sur la TV peut être
+   * redimensionnée (zoom). Jamais envoyé au plateau.
+   */
+  preciseView: boolean;
   fog: FogState;
   players: Player[];
   /** Jamais envoyé au plateau. */
@@ -81,7 +93,8 @@ export function createInitialGameState(): GameState {
     revision: 0,
     mapAssetId: null,
     grid,
-    camera: gridCenter(grid),
+    camera: centeredCamera(grid),
+    preciseView: false,
     fog: { enabled: false, ops: [] },
     players: [],
     dmNotes: '',

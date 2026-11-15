@@ -1,22 +1,19 @@
-import { gridCenter, type Camera, type GridConfig } from '../core/models/game-state.model';
+import { centeredCamera, type Camera, type GridConfig } from '../core/models/game-state.model';
 
 /**
- * `contain` : toute la grille est visible (bandes vides si les proportions diffèrent).
- * `cover` : la grille couvre tout l'écran, ce qui dépasse est rogné.
+ * `contain` : toute la grille est visible (bandes vides si les proportions
+ * diffèrent) ; la caméra est ignorée.
+ * `cover` : la grille couvre tout l'écran, ce qui dépasse est rogné ; la
+ * caméra choisit la zone visible et son zoom.
  */
 export type Fit = 'contain' | 'cover';
 
 type GridSize = Pick<GridConfig, 'cols' | 'rows'>;
 
-/** Placement de la grille dans le canvas. */
-export interface Layout {
-  /** Taille d'une case, en pixels CSS. */
-  cellPx: number;
-  /** Coin haut-gauche de la grille dans le canvas, en pixels CSS. */
-  originX: number;
-  originY: number;
-  /** Centre réellement affiché, une fois la caméra ramenée dans la grille. */
-  camera: Camera;
+/** Point en cases. */
+export interface CellPoint {
+  x: number;
+  y: number;
 }
 
 /** Rectangle en cases. */
@@ -25,6 +22,17 @@ export interface CellRect {
   y: number;
   w: number;
   h: number;
+}
+
+/** Placement de la grille dans le canvas. */
+export interface Layout {
+  /** Taille d'une case, en pixels CSS. */
+  cellPx: number;
+  /** Coin haut-gauche de la grille dans le canvas, en pixels CSS. */
+  originX: number;
+  originY: number;
+  /** Caméra réellement appliquée, une fois ramenée dans la grille. */
+  camera: Camera;
 }
 
 /**
@@ -39,19 +47,19 @@ export function computeLayout(
   camera: Camera,
   fit: Fit,
 ): Layout {
+  const wanted = fit === 'cover' ? camera : centeredCamera(grid);
+  const zoom = wanted.zoom > 0 ? wanted.zoom : 1;
   const scale = fit === 'cover' ? Math.max : Math.min;
-  const cellPx = Math.max(0, scale(width / grid.cols, height / grid.rows));
-  if (cellPx === 0) return { cellPx, originX: 0, originY: 0, camera: gridCenter(grid) };
+  const cellPx = Math.max(0, scale(width / grid.cols, height / grid.rows) * zoom);
+  if (cellPx === 0) return { cellPx, originX: 0, originY: 0, camera: centeredCamera(grid) };
 
-  const center: Camera = {
-    x: clampAxis(camera.x, width / cellPx, grid.cols),
-    y: clampAxis(camera.y, height / cellPx, grid.rows),
-  };
+  const x = clampAxis(wanted.x, width / cellPx, grid.cols);
+  const y = clampAxis(wanted.y, height / cellPx, grid.rows);
   return {
     cellPx,
-    originX: width / 2 - center.x * cellPx,
-    originY: height / 2 - center.y * cellPx,
-    camera: center,
+    originX: width / 2 - x * cellPx,
+    originY: height / 2 - y * cellPx,
+    camera: { x, y, zoom },
   };
 }
 

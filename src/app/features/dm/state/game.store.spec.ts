@@ -49,9 +49,22 @@ describe('GameStore', () => {
   });
 
   it('recentre la TV sur la nouvelle carte', () => {
-    store.setCamera({ x: 1, y: 1 });
+    store.setCamera({ x: 1, y: 1, zoom: 3 });
     store.setMap('carte-1', { cols: 30, rows: 20 });
-    expect(store.boardView().camera).toEqual({ x: 15, y: 10 });
+    expect(store.boardView().camera).toEqual({ x: 15, y: 10, zoom: 1 });
+  });
+
+  it("le mode précis reste côté MJ, et le quitter ramène la carte entière", () => {
+    const before = store.boardView();
+    store.setPreciseView(true);
+    expect(store.boardView()).toBe(before);
+    expect(store.boardView()).not.toHaveProperty('preciseView');
+
+    store.setCamera({ x: 5, y: 5, zoom: 3 });
+    store.setPreciseView(false);
+
+    expect(store.preciseView()).toBe(false);
+    expect(store.camera()).toEqual({ x: 5, y: 5, zoom: 1 });
   });
 
   it('borne les réglages de grille invalides', () => {

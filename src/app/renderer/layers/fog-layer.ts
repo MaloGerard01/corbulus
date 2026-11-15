@@ -27,7 +27,7 @@ export class FogLayer {
   private stale = true;
   private cols = 0;
   private rows = 0;
-  /** Taille d'une case dans la texture (≤ taille à l'écran, voir MAX_TEXTURE_PX). */
+  /** Taille d'une case dans la texture : palier proche de la taille à l'écran (voir ensureTexture). */
   private cellPx = 0;
 
   constructor(
@@ -61,20 +61,26 @@ export class FogLayer {
   }
 
   /**
-   * Une texture à la résolution de l'écran (plafonnée), recréée si la grille
-   * ou la taille des cases change.
+   * Une texture à peu près à la résolution de l'écran, recréée si la grille
+   * change ou si la taille des cases franchit un palier.
    */
   private ensureTexture(grid: GridConfig, cellPx: number): void {
-    const key = `${grid.cols}x${grid.rows}@${cellPx}`;
+    // Paliers ×√2 : zoomer ou redimensionner (qui changent cellPx à chaque
+    // mouvement de souris) ne recrée la texture, et ne redessine tout, qu'au
+    // passage d'un palier.
+    const stepped = 2 ** (Math.ceil(Math.log2(cellPx) * 2) / 2);
+    // En mode `cover` (et avec le zoom), la grille dépasse de l'écran : sa
+    // texture peut devenir énorme. Au-delà du plafond, on sacrifie un peu de
+    // netteté des bords.
+    const maxCssPx = MAX_TEXTURE_PX / this.renderer.resolution;
+    const textureCellPx = Math.min(stepped, maxCssPx / grid.cols, maxCssPx / grid.rows);
+
+    const key = `${grid.cols}x${grid.rows}@${textureCellPx}`;
     if (key === this.textureKey) return;
     this.textureKey = key;
     this.cols = grid.cols;
     this.rows = grid.rows;
-
-    // En mode `cover`, la grille dépasse de l'écran : sa texture peut devenir
-    // énorme. Au-delà du plafond, on sacrifie un peu de netteté des bords.
-    const maxCssPx = MAX_TEXTURE_PX / this.renderer.resolution;
-    this.cellPx = Math.min(cellPx, maxCssPx / grid.cols, maxCssPx / grid.rows);
+    this.cellPx = textureCellPx;
 
     this.texture?.destroy(true);
     this.texture = RenderTexture.create({

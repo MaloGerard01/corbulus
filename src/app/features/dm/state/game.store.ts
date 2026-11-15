@@ -2,8 +2,8 @@ import { Injectable, computed, signal } from '@angular/core';
 
 import {
   SEATS,
+  centeredCamera,
   createInitialGameState,
-  gridCenter,
   type Camera,
   type FogOp,
   type GameState,
@@ -41,6 +41,7 @@ export class GameStore {
   readonly mapAssetId = computed(() => this._state().mapAssetId);
   readonly grid = computed(() => this._state().grid);
   readonly camera = computed(() => this._state().camera);
+  readonly preciseView = computed(() => this._state().preciseView);
   readonly fog = computed(() => this._state().fog);
   readonly dmNotes = computed(() => this._state().dmNotes);
   readonly boardView = computed(() => toBoardView(this._state()), {
@@ -95,7 +96,7 @@ export class GameStore {
         ...s,
         mapAssetId,
         grid: nextGrid,
-        camera: gridCenter(nextGrid),
+        camera: centeredCamera(nextGrid),
         fog: { ...s.fog, ops: [] },
       };
     });
@@ -108,6 +109,15 @@ export class GameStore {
   /** Déplace la zone affichée sur la TV. Le renderer la ramène de toute façon dans la grille. */
   setCamera(camera: Camera): void {
     this.mutate((s) => ({ ...s, camera }));
+  }
+
+  /** Quitter le mode « Précis » ramène la TV à la carte entière (zoom 1). */
+  setPreciseView(preciseView: boolean): void {
+    this.mutate((s) => ({
+      ...s,
+      preciseView,
+      camera: preciseView || s.camera.zoom === 1 ? s.camera : { ...s.camera, zoom: 1 },
+    }));
   }
 
   // --- Brouillard ----------------------------------------------------------

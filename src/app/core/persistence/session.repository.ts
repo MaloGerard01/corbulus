@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 
-import { createInitialGameState, gridCenter, type GameState } from '../models/game-state.model';
+import { centeredCamera, createInitialGameState, type GameState } from '../models/game-state.model';
 import { db } from './db';
 
 const CURRENT_SESSION_ID = 'current';
@@ -19,8 +19,8 @@ export class SessionRepository {
       ...initial,
       ...record.state,
       grid,
-      // Absente des sauvegardes antérieures à l'ajout de la caméra.
-      camera: record.state.camera ?? gridCenter(grid),
+      // Caméra absente (ou sans zoom) dans les sauvegardes antérieures.
+      camera: { ...centeredCamera(grid), ...record.state.camera },
     };
   }
 
