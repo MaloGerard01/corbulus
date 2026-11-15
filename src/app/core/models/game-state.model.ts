@@ -26,14 +26,51 @@ export type Shape =
   | { kind: 'rect'; x: number; y: number; w: number; h: number }
   | { kind: 'polygon'; points: [number, number][] };
 
-export interface FogOp {
-  mode: 'reveal' | 'hide';
-  shape: Shape;
+/**
+ * Aspect du brouillard peint : `darkness` cache tout en noir, `fog` (brouillard
+ * de guerre) sous un gris nuageux.
+ */
+export type FogStyle = 'darkness' | 'fog';
+
+export const FOG_STYLE_LABELS: Record<FogStyle, string> = {
+  darkness: 'Obscurité',
+  fog: 'Brouillard de guerre',
+};
+
+interface FogOpBase {
+  /** Identifie l'opération : le plateau sait ainsi ce qu'il a déjà dessiné. */
+  id: string;
+  /** `hide` cache la carte, `reveal` la dévoile. */
+  mode: 'hide' | 'reveal';
+  /** Aspect du brouillard ajouté par `hide` (sans effet pour `reveal`). */
+  style: FogStyle;
 }
 
+/** Largeur du fondu par défaut, en cases : une à deux cases assombries avant le noir complet. */
+export const DEFAULT_FOG_FADE = 2;
+
+/** Coup de pinceau, à bords progressifs. */
+export interface FogBrushOp extends FogOpBase {
+  kind: 'brush';
+  /** Diamètre du cœur du pinceau, entièrement couvert, en cases. */
+  size: number;
+  /** Largeur du fondu autour du cœur, en cases (0 : bord net). */
+  fade: number;
+  /** Centres successifs du pinceau, en cases. Un tracé en cours ne fait que s'allonger. */
+  points: [number, number][];
+}
+
+/** Toute la carte d'un coup (« Tout couvrir » / « Tout dévoiler »), annulable. */
+export interface FogFillOp extends FogOpBase {
+  kind: 'fill';
+}
+
+export type FogOp = FogBrushOp | FogFillOp;
+
 export interface FogState {
+  /** Afficher ou masquer le brouillard peint, sans le perdre. */
   enabled: boolean;
-  /** Appliquées dans l'ordre sur un calque entièrement noir. */
+  /** Appliquées dans l'ordre sur une carte d'abord entièrement visible. */
   ops: FogOp[];
 }
 

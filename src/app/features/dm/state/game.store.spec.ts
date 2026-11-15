@@ -3,7 +3,15 @@ import { TestBed } from '@angular/core/testing';
 import type { FogOp } from '../../../core/models/game-state.model';
 import { GameStore } from './game.store';
 
-const reveal: FogOp = { mode: 'reveal', shape: { kind: 'circle', cx: 5, cy: 5, r: 3 } };
+const reveal: FogOp = {
+  id: 'trace-1',
+  kind: 'brush',
+  mode: 'reveal',
+  style: 'darkness',
+  size: 3,
+  fade: 2,
+  points: [[5, 5]],
+};
 
 describe('GameStore', () => {
   let store: GameStore;
@@ -83,7 +91,8 @@ describe('GameStore', () => {
       store.setFogEnabled(true);
       store.applyFog(reveal);
       store.addMap({ assetId: 'image-2', name: 'Crypte' });
-      expect(store.fog()).toEqual({ enabled: false, ops: [] });
+      // Nouvelle carte : brouillard actif mais vide, rien n'est caché.
+      expect(store.fog()).toEqual({ enabled: true, ops: [] });
       store.setCamera({ x: 8, y: 2, zoom: 1 });
 
       store.selectMap(taverne.id);
@@ -168,11 +177,54 @@ describe('GameStore', () => {
     expect(store.grid()).toEqual({ cols: 1, rows: 200, mapCellPx: 1, offsetX: 0, offsetY: 0 });
   });
 
-  it('annule la dernière opération de brouillard', () => {
-    store.addMap({ assetId: 'image-1', name: 'Taverne' });
-    store.applyFog(reveal);
-    store.applyFog({ mode: 'reveal', shape: { kind: 'rect', x: 0, y: 0, w: 2, h: 2 } });
-    store.undoFog();
-    expect(store.fog().ops).toEqual([reveal]);
+  describe('brouillard', () => {
+    beforeEach(() => store.addMap({ assetId: 'image-1', name: 'Taverne' }));
+
+    it('trace un coup de pinceau qui s’allonge au fil du geste', () => {
+      const id = store.beginFogStroke({ mode: 'hide', style: 'fog', size: 2, fade: 1, point: [1, 1] });
+      store.extendFogStroke(id!, [2, 1]);
+      store.extendFogStroke(id!, [3, 2]);
+
+      expect(store.fog().ops).toEqual([
+        { id, kind: 'brush', mode: 'hide', style: 'fog', size: 2, fade: 1, points: [[1, 1], [2, 1], [3, 2]] },
+      ]);
+    });
+
+    it("n'allonge plus un tracé annulé ou terminé par un autre", () => {
+      const first = store.beginFogStroke({ mode: 'hide', style: 'darkness', size: 2, fade: 1, point: [0, 0] });
+      store.beginFogStroke({ mode: 'reveal', style: 'darkness', size: 2, fade: 1, point: [5, 5] });
+
+      store.extendFogStroke(first!, [1, 0]);
+
+      expect(store.fog().ops.map((op) => (op.kind === 'brush' ? op.points.length : 0))).toEqual([1, 1]);
+    });
+
+    it('peindre rend le brouillard visible s’il était masqué', () => {
+      store.setFogEnabled(false);
+      store.beginFogStroke({ mode: 'hide', style: 'darkness', size: 2, fade: 1, point: [0, 0] });
+      expect(store.fog().enabled).toBe(true);
+    });
+
+    it('couvre et dévoile toute la carte, de façon annulable', () => {
+      store.fillFog('hide', 'fog');
+      store.fillFog('reveal', 'fog');
+
+      expect(store.fog().ops).toMatchObject([
+        { kind: 'fill', mode: 'hide', style: 'fog' },
+        { kind: 'fill', mode: 'reveal' },
+      ]);
+      store.undoFog();
+      expect(store.fog().ops).toHaveLength(1);
+    });
+
+    it('annule un coup de pinceau entier', () => {
+      store.applyFog(reveal);
+      const id = store.beginFogStroke({ mode: 'hide', style: 'darkness', size: 2, fade: 1, point: [0, 0] });
+      store.extendFogStroke(id!, [4, 4]);
+
+      store.undoFog();
+
+      expect(store.fog().ops).toEqual([reveal]);
+    });
   });
 });

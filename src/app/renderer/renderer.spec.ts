@@ -1,5 +1,3 @@
-import type { FogOp } from '../core/models/game-state.model';
-import { firstNewFogOp, fogOpKey } from './fog-ops';
 import { computeLayout, visibleCells } from './layout';
 
 describe('computeLayout', () => {
@@ -63,28 +61,5 @@ describe('visibleCells', () => {
   it('se limite à la grille quand elle tient en entier', () => {
     const rect = visibleCells(1000, 1000, { cols: 10, rows: 5 }, { x: 0, y: 0, zoom: 1 }, 'contain');
     expect(rect).toEqual({ x: 0, y: 0, w: 10, h: 5 });
-  });
-});
-
-describe('firstNewFogOp', () => {
-  const reveal: FogOp = { mode: 'reveal', shape: { kind: 'circle', cx: 5, cy: 5, r: 3 } };
-  const hide: FogOp = { mode: 'hide', shape: { kind: 'rect', x: 0, y: 0, w: 2, h: 2 } };
-  const keys = (ops: FogOp[]) => ops.map(fogOpKey);
-
-  it("ne dessine que les opérations ajoutées", () => {
-    expect(firstNewFogOp(keys([reveal]), keys([reveal, hide]))).toBe(1);
-  });
-
-  it("n'a rien à dessiner si rien n'a changé, même après un clonage", () => {
-    const cloned = structuredClone([reveal, hide]);
-    expect(firstNewFogOp(keys([reveal, hide]), keys(cloned))).toBe(2);
-  });
-
-  it('redessine tout après une annulation', () => {
-    expect(firstNewFogOp(keys([reveal, hide]), keys([reveal]))).toBeNull();
-  });
-
-  it('redessine tout si une opération a été remplacée', () => {
-    expect(firstNewFogOp(keys([reveal, hide]), keys([reveal, reveal]))).toBeNull();
   });
 });

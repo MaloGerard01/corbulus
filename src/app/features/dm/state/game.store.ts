@@ -8,7 +8,9 @@ import {
   createInitialGameState,
   findMap,
   type Camera,
+  type FogBrushOp,
   type FogOp,
+  type FogStyle,
   type GameState,
   type GridConfig,
   type Player,
@@ -37,6 +39,11 @@ export interface NewMap {
   name: string;
   grid?: Partial<GridConfig>;
 }
+
+/** Début d'un coup de pinceau : son premier point, en cases. */
+export type NewFogStroke = Pick<FogBrushOp, 'mode' | 'style' | 'size' | 'fade'> & {
+  point: [number, number];
+};
 
 /**
  * Source de vérité de la partie. Fourni uniquement par les routes MJ.
@@ -116,7 +123,8 @@ export class GameStore {
       name,
       grid: nextGrid,
       camera: centeredCamera(nextGrid),
-      fog: { enabled: false, ops: [] },
+      // Actif mais vide : rien n'est caché tant que le MJ n'a pas peint.
+      fog: { enabled: true, ops: [] },
     };
     this.mutate((s) => ({
       ...s,
@@ -191,14 +199,46 @@ export class GameStore {
 
   // --- Carte en édition : brouillard ---------------------------------------
 
+  /** Affiche ou masque le brouillard peint, sans le perdre. */
   setFogEnabled(enabled: boolean): void {
     this.mutateSelectedMap((m) => ({ ...m, fog: { ...m.fog, enabled } }));
   }
 
+  /** Ajoute une opération ; peindre rend le brouillard visible s'il était masqué. */
   applyFog(op: FogOp): void {
-    this.mutateSelectedMap((m) => ({ ...m, fog: { ...m.fog, ops: [...m.fog.ops, op] } }));
+    this.mutateSelectedMap((m) => ({ ...m, fog: { enabled: true, ops: [...m.fog.ops, op] } }));
   }
 
+  /**
+   * Commence un coup de pinceau sur la carte en édition. Renvoie son id pour
+   * l'allonger au fil du geste (`null` sans carte en édition).
+   */
+  beginFogStroke({ point, ...stroke }: NewFogStroke): string | null {
+    if (!this.selectedMap()) return null;
+    const id = crypto.randomUUID();
+    this.applyFog({ id, kind: 'brush', ...stroke, points: [point] });
+    return id;
+  }
+
+  /** Allonge le coup de pinceau en cours, s'il est toujours le dernier tracé. */
+  extendFogStroke(id: string, point: [number, number]): void {
+    const last = this.selectedMap()?.fog.ops.at(-1);
+    if (last?.id !== id || last.kind !== 'brush') return;
+    this.mutateSelectedMap((m) => ({
+      ...m,
+      fog: {
+        ...m.fog,
+        ops: [...m.fog.ops.slice(0, -1), { ...last, points: [...last.points, point] }],
+      },
+    }));
+  }
+
+  /** Couvre (`hide`) ou dévoile (`reveal`) toute la carte en édition. Annulable. */
+  fillFog(mode: 'hide' | 'reveal', style: FogStyle): void {
+    this.applyFog({ id: crypto.randomUUID(), kind: 'fill', mode, style });
+  }
+
+  /** Retire la dernière opération (un coup de pinceau entier). */
   undoFog(): void {
     this.mutateSelectedMap((m) => ({ ...m, fog: { ...m.fog, ops: m.fog.ops.slice(0, -1) } }));
   }
@@ -211,10 +251,6 @@ export class GameStore {
 
   load(state: GameState): void {
     this._state.set(state);
-  }
-
-  reset(): void {
-    this._state.set(createInitialGameState());
   }
 
   // --- Interne -------------------------------------------------------------

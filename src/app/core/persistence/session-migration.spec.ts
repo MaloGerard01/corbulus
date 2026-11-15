@@ -30,6 +30,31 @@ describe('restoreGameState', () => {
     expect(state).not.toHaveProperty('grid');
   });
 
+  it("écarte les opérations de brouillard d'avant le pinceau", () => {
+    const fill = { id: 'op-1', kind: 'fill', mode: 'hide', style: 'fog' } as const;
+    const state = restoreGameState(
+      {
+        mapAssetId: 'image-1',
+        fog: { enabled: true, ops: [{ mode: 'reveal', shape: { kind: 'circle', cx: 1, cy: 1, r: 2 } }, fill] },
+      },
+      null,
+    );
+    expect(state.maps[0].fog.ops).toEqual([fill]);
+  });
+
+  it("donne le fondu par défaut aux tracés d'avant ce réglage", () => {
+    const stroke = { id: 'op-1', kind: 'brush', mode: 'hide', style: 'fog', size: 2, points: [[1, 1]] };
+    const withSoftness = { ...stroke, softness: 0.8 };
+    const state = restoreGameState(
+      { mapAssetId: 'image-1', fog: { enabled: true, ops: [stroke, { ...withSoftness, id: 'op-2' }] } },
+      null,
+    );
+    expect(state.maps[0].fog.ops).toEqual([
+      { ...stroke, fade: 2 },
+      { ...stroke, id: 'op-2', fade: 2 },
+    ]);
+  });
+
   it("donne une session sans carte à une ancienne sauvegarde qui n'en avait pas", () => {
     const state = restoreGameState({ mapAssetId: null, players: [] }, null);
     expect(state.maps).toEqual([]);

@@ -27,7 +27,7 @@
  * (hover:, md:…).
  */
 @utility btn {
-  @apply cursor-pointer rounded-md border border-border bg-surface-2 px-2.5 py-1 text-text hover:border-accent;
+  @apply cursor-pointer rounded-md border border-border bg-surface-2 px-2.5 py-1 text-text hover:border-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border;
 }
 
 @utility btn-danger {

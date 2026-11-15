@@ -9,19 +9,32 @@ import {
   viewChild,
 } from '@angular/core';
 
-import { centeredCamera, type Camera } from '../../../core/models/game-state.model';
+import {
+  DEFAULT_FOG_FADE,
+  centeredCamera,
+  type Camera,
+  type FogStyle,
+} from '../../../core/models/game-state.model';
 import { computeLayout, visibleCells, type CellPoint } from '../../../renderer/layout';
 import { RENDER_STYLES } from '../../../renderer/render-style';
 import { BoardCanvas } from '../../../shared/board-canvas';
 import { DmSyncEffects } from '../state/dm-sync.effects';
 import { GameStore } from '../state/game.store';
 import { resizeFrame, type FrameCorner } from './frame-resize';
+import {
+  BRUSH_SIZE,
+  PreviewToolbar,
+  type BrushMode,
+  type PreviewSection,
+} from './preview-toolbar';
 
 type Drag =
   /** Déplacement du cadre : case sous le pointeur et caméra (bornée) au départ. */
   | { kind: 'pan'; start: CellPoint; camera: Camera }
   /** Redimensionnement par un coin : le coin opposé reste fixe. */
-  | { kind: 'resize'; corner: FrameCorner; anchor: CellPoint };
+  | { kind: 'resize'; corner: FrameCorner; anchor: CellPoint }
+  /** Coup de pinceau en cours : son id, et le dernier point enregistré. */
+  | { kind: 'paint'; strokeId: string; size: number; last: CellPoint };
 
 const CORNERS: readonly FrameCorner[] = ['top-left', 'bottom-right'];
 
@@ -31,14 +44,24 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
 };
 
 /**
+ * Distance minimale entre deux points d'un tracé, en fraction du diamètre du
+ * pinceau : les empreintes sont interpolées entre eux, inutile d'en garder plus.
+ */
+const STROKE_POINT_STEP = 0.1;
+
+/**
  * Aperçu côté MJ de la carte en édition (affichée ou non) : toute la grille,
- * avec un cadre autour de la zone que la TV en montre. Glisser l'aperçu
- * déplace ce cadre ; en mode « Précis », ses coins permettent de le
- * redimensionner (zoom).
+ * avec un cadre autour de la zone que la TV en montre.
+ *
+ * La section ouverte de la barre d'outils, à droite, décide de l'outil :
+ * « Affichage » pour déplacer ce cadre (et, en mode « Précis », le
+ * redimensionner par ses coins), « Brouillard » pour le pinceau. Tout fermé,
+ * l'aperçu est en lecture seule.
  */
 @Component({
   selector: 'app-board-preview',
-  imports: [BoardCanvas],
+  imports: [BoardCanvas, PreviewToolbar],
+  host: { '(document:keydown)': 'onKeydown($event)' },
   template: `
     <section class="panel">
       <header class="mb-3 flex items-center justify-between gap-4">
@@ -65,74 +88,74 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
             <span class="text-muted">aucune carte sélectionnée</span>
           }
         </div>
-        <label
-          class="flex shrink-0 items-center gap-2"
-          [class.cursor-pointer]="store.selectedMap()"
-          [class.opacity-50]="!store.selectedMap()"
-          [title]="store.selectedMap() ? '' : 'Sélectionnez une carte pour gérer son brouillard'"
-        >
-          <input
-            type="checkbox"
-            class="size-4 accent-accent"
-            [checked]="store.fog().enabled"
-            [disabled]="!store.selectedMap()"
-            (change)="onFogToggle($event)"
-          />
-          Brouillard
-        </label>
       </header>
 
-      <div
-        #surface
-        class="relative h-[50vh] touch-none"
-        [class.cursor-grab]="preciseUnavailable() === null && !drag()"
-        [class.cursor-grabbing]="drag()?.kind === 'pan'"
-        (pointerdown)="startPan($event)"
-        (pointermove)="moveDrag($event)"
-        (pointerup)="endDrag()"
-        (pointercancel)="endDrag()"
-      >
-        <app-board-canvas
-          class="absolute inset-0"
-          mode="dm"
-          [view]="store.selectedView()"
-          [frame]="frame()"
-        />
+      <div class="flex flex-col gap-4 lg:flex-row">
+        <div
+          #surface
+          class="relative h-[50vh] min-w-0 flex-1 touch-none overflow-hidden"
+          [class.cursor-grab]="tool() === 'pan' && preciseUnavailable() === null && !drag()"
+          [class.cursor-grabbing]="drag()?.kind === 'pan'"
+          [class.cursor-crosshair]="(tool() === 'paint' || tool() === 'erase') && store.selectedMap()"
+          (pointerdown)="startDrag($event)"
+          (pointermove)="onPointerMove($event)"
+          (pointerup)="endDrag()"
+          (pointercancel)="endDrag()"
+          (pointerleave)="hover.set(null)"
+        >
+          <app-board-canvas
+            class="absolute inset-0"
+            mode="dm"
+            [view]="store.selectedView()"
+            [frame]="frame()"
+          />
 
-        @if (handles(); as handles) {
-          @for (corner of corners; track corner) {
+          @if (handles(); as handles) {
+            @for (corner of corners; track corner) {
+              <div
+                class="absolute size-4 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-sm border-2 border-white bg-accent shadow-md"
+                [style.left.px]="handles[corner].left"
+                [style.top.px]="handles[corner].top"
+                [attr.data-corner]="corner"
+                [attr.aria-label]="cornerLabels[corner]"
+                (pointerdown)="startResize(corner, $event)"
+              ></div>
+            }
+          }
+
+          <!-- Pinceau sous le pointeur : cœur (trait plein) et étendue du fondu (pointillés). -->
+          @if (brushCursor(); as cursor) {
+            @if (cursor.outer > cursor.core) {
+              <div
+                data-brush-fade
+                class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/70"
+                [style.left.px]="cursor.left"
+                [style.top.px]="cursor.top"
+                [style.width.px]="cursor.outer"
+                [style.height.px]="cursor.outer"
+              ></div>
+            }
             <div
-              class="absolute size-4 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-sm border-2 border-white bg-accent shadow-md"
-              [style.left.px]="handles[corner].left"
-              [style.top.px]="handles[corner].top"
-              [attr.data-corner]="corner"
-              [attr.aria-label]="cornerLabels[corner]"
-              (pointerdown)="startResize(corner, $event)"
+              data-brush-cursor
+              class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.6)]"
+              [style.left.px]="cursor.left"
+              [style.top.px]="cursor.top"
+              [style.width.px]="cursor.core"
+              [style.height.px]="cursor.core"
             ></div>
           }
-        }
-      </div>
+        </div>
 
-      <footer class="mt-2 flex items-center">
-        <label
-          class="flex items-center gap-2"
-          [class.cursor-pointer]="preciseUnavailable() === null"
-          [class.opacity-50]="preciseUnavailable() !== null"
-          [title]="
-            preciseUnavailable() ??
-            'Redimensionner le cadre par ses coins pour zoomer sur une partie de la carte'
-          "
-        >
-          <input
-            type="checkbox"
-            class="size-4 accent-accent"
-            [checked]="store.preciseView()"
-            [disabled]="preciseUnavailable() !== null"
-            (change)="onPreciseToggle($event)"
-          />
-          Mode précis
-        </label>
-      </footer>
+        <app-preview-toolbar
+          class="lg:w-72 lg:shrink-0"
+          [(section)]="section"
+          [(brushMode)]="brushMode"
+          [(fogStyle)]="fogStyle"
+          [(brushSize)]="brushSize"
+          [(fade)]="fade"
+          [viewUnavailable]="preciseUnavailable()"
+        />
+      </div>
     </section>
   `,
 })
@@ -144,6 +167,27 @@ export class BoardPreview {
   protected readonly corners = CORNERS;
   protected readonly cornerLabels = CORNER_LABELS;
   protected readonly drag = signal<Drag | null>(null);
+
+  /** Section ouverte de la barre d'outils ; tout fermé : lecture seule. */
+  protected readonly section = signal<PreviewSection | null>(null);
+  protected readonly brushMode = signal<BrushMode>('paint');
+  protected readonly fogStyle = signal<FogStyle>('darkness');
+  protected readonly brushSize = signal(BRUSH_SIZE.default);
+  protected readonly fade = signal(DEFAULT_FOG_FADE);
+  /** Position du pointeur dans l'aperçu, en pixels (`null` hors de l'aperçu). */
+  protected readonly hover = signal<{ x: number; y: number } | null>(null);
+
+  /** Outil actif sur l'aperçu, décidé par la section ouverte de la barre d'outils. */
+  protected readonly tool = computed<'pan' | BrushMode | null>(() => {
+    switch (this.section()) {
+      case 'display':
+        return 'pan';
+      case 'fog':
+        return this.brushMode();
+      default:
+        return null;
+    }
+  });
 
   /** Taille de l'aperçu, en pixels CSS. */
   private readonly previewSize = signal<{ width: number; height: number } | null>(null);
@@ -169,24 +213,25 @@ export class BoardPreview {
     );
   });
 
-  /** Pourquoi la vue de la TV ne peut pas être réglée (`null` : elle peut l'être). */
   /** La carte en édition est-elle celle que voient les joueurs ? */
   protected readonly onScreen = computed(() => {
     const selected = this.store.selectedMap();
     return selected !== null && selected.id === this.store.activeMap()?.id;
   });
 
+  /** Pourquoi la vue de la TV ne peut pas être réglée (`null` : elle peut l'être). */
   protected readonly preciseUnavailable = computed(() => {
     if (!this.store.selectedMap()) return 'Sélectionnez une carte pour régler sa vue';
     if (!this.frame()) return 'Ouvrez le plateau pour régler la zone affichée sur la TV';
     return null;
   });
 
-  /** Position des poignées dans l'aperçu, en pixels (mode « Précis » seulement). */
+  /** Position des poignées, en pixels (mode « Précis », outil « Déplacer »). */
   protected readonly handles = computed(() => {
     const frame = this.frame();
     const layout = this.previewLayout();
-    if (!this.store.preciseView() || this.preciseUnavailable() || !frame || !layout) return null;
+    const usable = this.store.preciseView() && this.tool() === 'pan' && !this.preciseUnavailable();
+    if (!usable || !frame || !layout) return null;
 
     const toPx = (x: number, y: number) => ({
       left: layout.originX + x * layout.cellPx,
@@ -196,6 +241,20 @@ export class BoardPreview {
       'top-left': toPx(frame.x, frame.y),
       'bottom-right': toPx(frame.x + frame.w, frame.y + frame.h),
     } satisfies Record<FrameCorner, { left: number; top: number }>;
+  });
+
+  /** Pinceau sous le pointeur, à l'échelle de l'aperçu : diamètres du cœur et du fondu, en pixels. */
+  protected readonly brushCursor = computed(() => {
+    const hover = this.hover();
+    const layout = this.previewLayout();
+    const painting = this.tool() === 'paint' || this.tool() === 'erase';
+    if (!painting || !this.store.selectedMap() || !hover || !layout) return null;
+    return {
+      left: hover.x,
+      top: hover.y,
+      core: this.brushSize() * layout.cellPx,
+      outer: (this.brushSize() + 2 * this.fade()) * layout.cellPx,
+    };
   });
 
   constructor() {
@@ -210,21 +269,26 @@ export class BoardPreview {
     });
   }
 
-  protected onFogToggle(event: Event): void {
-    this.store.setFogEnabled((event.target as HTMLInputElement).checked);
+  /** Ctrl+Z annule le dernier tracé, sauf dans un champ de saisie (notes…). */
+  protected onKeydown(event: KeyboardEvent): void {
+    const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z';
+    if (!isUndo || isTextField(event.target)) return;
+    event.preventDefault();
+    this.store.undoFog();
   }
 
-  protected onPreciseToggle(event: Event): void {
-    this.store.setPreciseView((event.target as HTMLInputElement).checked);
-  }
-
-  protected startPan(event: PointerEvent): void {
-    const start = this.toCell(event);
-    const camera = this.boundCamera(this.store.camera());
-    if (event.button !== 0 || this.preciseUnavailable() || !start || !camera) return;
-
-    this.capture(event);
-    this.drag.set({ kind: 'pan', start, camera });
+  protected startDrag(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    switch (this.tool()) {
+      case 'pan':
+        return this.startPan(event);
+      case 'paint':
+        return this.startPaint(event, 'hide');
+      case 'erase':
+        return this.startPaint(event, 'reveal');
+      default:
+      // Aucune section ouverte : lecture seule.
+    }
   }
 
   protected startResize(corner: FrameCorner, event: PointerEvent): void {
@@ -241,11 +305,62 @@ export class BoardPreview {
     this.drag.set({ kind: 'resize', corner, anchor });
   }
 
-  protected moveDrag(event: PointerEvent): void {
+  protected onPointerMove(event: PointerEvent): void {
+    const rect = this.surface().nativeElement.getBoundingClientRect();
+    this.hover.set({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+
     const drag = this.drag();
     const cell = drag && this.toCell(event);
+    if (!drag || !cell) return;
+
+    if (drag.kind === 'paint') {
+      this.continuePaint(drag, cell);
+    } else {
+      this.moveFrame(drag, cell);
+    }
+  }
+
+  protected endDrag(): void {
+    this.drag.set(null);
+  }
+
+  private startPan(event: PointerEvent): void {
+    const start = this.toCell(event);
+    const camera = this.boundCamera(this.store.camera());
+    if (this.preciseUnavailable() || !start || !camera) return;
+
+    this.capture(event);
+    this.drag.set({ kind: 'pan', start, camera });
+  }
+
+  private startPaint(event: PointerEvent, mode: 'hide' | 'reveal'): void {
+    const cell = this.toCell(event);
+    if (!cell) return;
+    const size = this.brushSize();
+    const strokeId = this.store.beginFogStroke({
+      mode,
+      style: this.fogStyle(),
+      size,
+      fade: this.fade(),
+      point: toPoint(cell),
+    });
+    if (!strokeId) return;
+
+    this.capture(event);
+    this.drag.set({ kind: 'paint', strokeId, size, last: cell });
+  }
+
+  private continuePaint(drag: Extract<Drag, { kind: 'paint' }>, cell: CellPoint): void {
+    const step = drag.size * STROKE_POINT_STEP;
+    if (Math.hypot(cell.x - drag.last.x, cell.y - drag.last.y) < step) return;
+
+    this.store.extendFogStroke(drag.strokeId, toPoint(cell));
+    this.drag.set({ ...drag, last: cell });
+  }
+
+  private moveFrame(drag: Exclude<Drag, { kind: 'paint' }>, cell: CellPoint): void {
     const viewport = this.boardViewport();
-    if (!drag || !cell || !viewport) return;
+    if (!viewport) return;
 
     const camera =
       drag.kind === 'pan'
@@ -260,10 +375,6 @@ export class BoardPreview {
     // bord, il faudrait « revenir » avant de repartir.
     const bounded = this.boundCamera(camera);
     if (bounded) this.store.setCamera(bounded);
-  }
-
-  protected endDrag(): void {
-    this.drag.set(null);
   }
 
   /** Le glisser continue même si le pointeur sort de l'aperçu. */
@@ -294,4 +405,17 @@ export class BoardPreview {
       RENDER_STYLES.board.fit,
     ).camera;
   }
+}
+
+/** Point d'un tracé, arrondi au centième de case : plus léger à envoyer et sauvegarder. */
+function toPoint({ x, y }: CellPoint): [number, number] {
+  return [Math.round(x * 100) / 100, Math.round(y * 100) / 100];
+}
+
+function isTextField(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.matches('textarea, input:not([type=range], [type=checkbox], [type=radio], [type=button])'))
+  );
 }

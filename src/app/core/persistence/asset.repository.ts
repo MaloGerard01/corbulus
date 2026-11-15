@@ -16,6 +16,9 @@ export interface AssetPreview {
 /** Plus grand côté des vignettes : nettes dans la galerie, même sur écran haute densité. */
 const THUMBNAIL_MAX_PX = 480;
 
+/** En deçà de cet âge, un fichier n'est jamais supprimé par le nettoyage. */
+const RECENT_ASSET_MS = 60 * 60 * 1000;
+
 /**
  * Fichiers importés (cartes…), stockés en Blob dans IndexedDB.
  * Seul leur identifiant circule dans l'état et vers le plateau : la vue MJ
@@ -69,11 +72,19 @@ export class AssetRepository {
     return record ? createImageBitmap(record.blob) : null;
   }
 
-  /** Supprime tout ce qui n'est plus référencé (carte retirée, session effacée…). */
+  /**
+   * Supprime ce qu'aucune session ne référence plus (carte retirée, session
+   * supprimée…). `usedIds` doit couvrir **toutes** les sessions.
+   *
+   * Les fichiers importés depuis moins d'une heure sont gardés : une fenêtre
+   * MJ peut les référencer sans avoir encore sauvegardé sa session.
+   */
   async deleteUnused(usedIds: readonly string[]): Promise<number> {
     const used = new Set(usedIds);
+    const cutoff = Date.now() - RECENT_ASSET_MS;
     // Seules les clés sont lues, pas les blobs.
-    const unused = (await db.assets.toCollection().primaryKeys()).filter((id) => !used.has(id));
+    const old = await db.assets.where('createdAt').below(cutoff).primaryKeys();
+    const unused = old.filter((id) => !used.has(id));
     await db.assets.bulkDelete(unused);
     return unused.length;
   }
