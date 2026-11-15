@@ -1,14 +1,29 @@
 import type { BoardView } from '../../../core/models/board-view.model';
-import type { GameState } from '../../../core/models/game-state.model';
+import {
+  BLANK_MAP,
+  findMap,
+  type GameState,
+  type Player,
+  type SessionMap,
+} from '../../../core/models/game-state.model';
 
-/** Filtre ce que le plateau a le droit de voir. */
+/**
+ * Filtre ce que le plateau a le droit de voir : uniquement la carte affichée
+ * (jamais les autres cartes de la session, ni celle en cours d'édition),
+ * sans les notes du MJ.
+ */
 export function toBoardView(state: GameState): BoardView {
+  return mapView(findMap(state, state.activeMapId), state.players);
+}
+
+/** Vue d'une carte au format du plateau (`null` : grille vierge). */
+export function mapView(map: SessionMap | null, players: Player[]): BoardView {
   return {
-    mapAssetId: state.mapAssetId,
-    grid: state.grid,
-    camera: state.camera,
-    fog: state.fog,
-    players: state.players,
+    mapAssetId: map?.assetId ?? null,
+    grid: map?.grid ?? BLANK_MAP.grid,
+    camera: map?.camera ?? BLANK_MAP.camera,
+    fog: map?.fog ?? BLANK_MAP.fog,
+    players,
   };
 }
 

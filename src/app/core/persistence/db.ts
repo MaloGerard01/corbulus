@@ -14,6 +14,8 @@ export interface AssetRecord {
   id: string;
   name: string;
   blob: Blob;
+  /** Vignette pour la galerie (absente des fichiers importés avant son ajout). */
+  thumbnail?: Blob;
   /** Dimensions de l'image, en pixels de l'image. */
   width: number;
   height: number;

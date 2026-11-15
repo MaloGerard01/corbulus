@@ -1,7 +1,8 @@
 import { Injectable } from '@angular/core';
 
-import { centeredCamera, createInitialGameState, type GameState } from '../models/game-state.model';
+import { mapNameFromFile, type GameState } from '../models/game-state.model';
 import { db } from './db';
+import { restoreGameState, type SavedState } from './session-migration';
 
 const CURRENT_SESSION_ID = 'current';
 
@@ -11,17 +12,11 @@ export class SessionRepository {
     const record = await db.sessions.get(CURRENT_SESSION_ID);
     if (!record) return null;
 
-    // Fusion avec l'état initial : une sauvegarde faite avant l'ajout
-    // d'un nouveau champ dans GameState (ou dans un sous-objet) reste chargeable.
-    const initial = createInitialGameState();
-    const grid = { ...initial.grid, ...record.state.grid };
-    return {
-      ...initial,
-      ...record.state,
-      grid,
-      // Caméra absente (ou sans zoom) dans les sauvegardes antérieures.
-      camera: { ...centeredCamera(grid), ...record.state.camera },
-    };
+    // La sauvegarde peut dater d'une version précédente de l'app.
+    const saved = record.state as SavedState;
+    const legacyMapName =
+      !saved.maps && saved.mapAssetId ? await this.assetName(saved.mapAssetId) : null;
+    return restoreGameState(saved, legacyMapName);
   }
 
   async saveCurrent(state: GameState): Promise<void> {
@@ -31,5 +26,10 @@ export class SessionRepository {
       updatedAt: Date.now(),
       state,
     });
+  }
+
+  private async assetName(assetId: string): Promise<string | null> {
+    const asset = await db.assets.get(assetId);
+    return asset ? mapNameFromFile(asset.name) : null;
   }
 }

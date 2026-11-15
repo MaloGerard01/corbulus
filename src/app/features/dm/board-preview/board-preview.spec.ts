@@ -60,8 +60,8 @@ describe('BoardPreview', () => {
       ],
     });
     store = TestBed.inject(GameStore);
-    store.updateGrid({ cols: 20, rows: 20 });
-    store.setCamera({ x: 10, y: 10, zoom: 1 });
+    // Carte 20 × 20 affichée, caméra centrée.
+    store.addMap({ assetId: 'image-1', name: 'Taverne', grid: { cols: 20, rows: 20 } });
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -107,6 +107,32 @@ describe('BoardPreview', () => {
     expect(renderer.setFrame).toHaveBeenLastCalledWith(null);
     expect(preciseCheckbox(fixture).disabled).toBe(true);
     expect(preciseCheckbox(fixture).closest('label')!.title).toContain('Ouvrez le plateau');
+  });
+
+  it('montre la carte en édition, en indiquant si elle est à l’écran', async () => {
+    const fixture = await render();
+    const status = () => fixture.nativeElement.querySelector('[data-status]').textContent.trim();
+
+    expect(renderer.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mapAssetId: 'image-1' }),
+    );
+    expect(fixture.nativeElement.querySelector('header').textContent).toContain('Taverne');
+    expect(status()).toBe('Non affichée');
+
+    store.activateMap(store.selectedMap()!.id);
+    await fixture.whenStable();
+    expect(status()).toBe("À l'écran");
+  });
+
+  it('désactive brouillard et mode précis sans carte sélectionnée', async () => {
+    boardViewport.set(TV);
+    store.selectMap(null);
+    const fixture = await render();
+    const fogCheckbox: HTMLInputElement = fixture.nativeElement.querySelector('header input');
+
+    expect(fogCheckbox.disabled).toBe(true);
+    expect(preciseCheckbox(fixture).disabled).toBe(true);
+    expect(preciseCheckbox(fixture).closest('label')!.title).toContain('Sélectionnez une carte');
   });
 
   it('encadre la partie de la carte visible sur la TV', async () => {

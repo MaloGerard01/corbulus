@@ -34,6 +34,11 @@
   @apply hover:border-danger hover:text-danger;
 }
 
+/* Action principale. Autonome : s'utilise seul, sans `btn`. */
+@utility btn-primary {
+  @apply cursor-pointer rounded-md border border-accent bg-accent px-2.5 py-1 font-semibold text-white hover:brightness-110;
+}
+
 @utility field {
   @apply rounded-md border border-border bg-surface-0 px-2 py-1 text-text;
 }

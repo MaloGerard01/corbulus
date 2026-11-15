@@ -31,9 +31,10 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
 };
 
 /**
- * Aperçu du plateau côté MJ : toute la grille, avec un cadre autour de la
- * zone visible sur la TV. Glisser l'aperçu déplace ce cadre ; en mode
- * « Précis », ses coins permettent de le redimensionner (zoom).
+ * Aperçu côté MJ de la carte en édition (affichée ou non) : toute la grille,
+ * avec un cadre autour de la zone que la TV en montre. Glisser l'aperçu
+ * déplace ce cadre ; en mode « Précis », ses coins permettent de le
+ * redimensionner (zoom).
  */
 @Component({
   selector: 'app-board-preview',
@@ -41,12 +42,40 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
   template: `
     <section class="panel">
       <header class="mb-3 flex items-center justify-between gap-4">
-        <h2 class="text-lg font-semibold">Aperçu du plateau</h2>
-        <label class="flex cursor-pointer items-center gap-2">
+        <div class="flex min-w-0 items-center gap-2">
+          <h2 class="shrink-0 text-lg font-semibold">Aperçu</h2>
+          @if (store.selectedMap(); as map) {
+            <span class="truncate text-muted" [title]="map.name">{{ map.name }}</span>
+            @if (onScreen()) {
+              <span
+                data-status
+                class="shrink-0 rounded bg-accent px-1.5 py-0.5 text-xs font-semibold text-white"
+              >
+                À l'écran
+              </span>
+            } @else {
+              <span
+                data-status
+                class="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs text-muted"
+              >
+                Non affichée
+              </span>
+            }
+          } @else {
+            <span class="text-muted">aucune carte sélectionnée</span>
+          }
+        </div>
+        <label
+          class="flex shrink-0 items-center gap-2"
+          [class.cursor-pointer]="store.selectedMap()"
+          [class.opacity-50]="!store.selectedMap()"
+          [title]="store.selectedMap() ? '' : 'Sélectionnez une carte pour gérer son brouillard'"
+        >
           <input
             type="checkbox"
             class="size-4 accent-accent"
             [checked]="store.fog().enabled"
+            [disabled]="!store.selectedMap()"
             (change)="onFogToggle($event)"
           />
           Brouillard
@@ -56,7 +85,7 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
       <div
         #surface
         class="relative h-[50vh] touch-none"
-        [class.cursor-grab]="frame() && !drag()"
+        [class.cursor-grab]="preciseUnavailable() === null && !drag()"
         [class.cursor-grabbing]="drag()?.kind === 'pan'"
         (pointerdown)="startPan($event)"
         (pointermove)="moveDrag($event)"
@@ -66,7 +95,7 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
         <app-board-canvas
           class="absolute inset-0"
           mode="dm"
-          [view]="store.boardView()"
+          [view]="store.selectedView()"
           [frame]="frame()"
         />
 
@@ -87,19 +116,18 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
       <footer class="mt-2 flex items-center">
         <label
           class="flex items-center gap-2"
-          [class.cursor-pointer]="frame()"
-          [class.opacity-50]="!frame()"
+          [class.cursor-pointer]="preciseUnavailable() === null"
+          [class.opacity-50]="preciseUnavailable() !== null"
           [title]="
-            frame()
-              ? 'Redimensionner le cadre par ses coins pour zoomer sur une partie de la carte'
-              : 'Ouvrez le plateau pour régler la zone affichée sur la TV'
+            preciseUnavailable() ??
+            'Redimensionner le cadre par ses coins pour zoomer sur une partie de la carte'
           "
         >
           <input
             type="checkbox"
             class="size-4 accent-accent"
             [checked]="store.preciseView()"
-            [disabled]="!frame()"
+            [disabled]="preciseUnavailable() !== null"
             (change)="onPreciseToggle($event)"
           />
           Mode précis
@@ -141,11 +169,24 @@ export class BoardPreview {
     );
   });
 
+  /** Pourquoi la vue de la TV ne peut pas être réglée (`null` : elle peut l'être). */
+  /** La carte en édition est-elle celle que voient les joueurs ? */
+  protected readonly onScreen = computed(() => {
+    const selected = this.store.selectedMap();
+    return selected !== null && selected.id === this.store.activeMap()?.id;
+  });
+
+  protected readonly preciseUnavailable = computed(() => {
+    if (!this.store.selectedMap()) return 'Sélectionnez une carte pour régler sa vue';
+    if (!this.frame()) return 'Ouvrez le plateau pour régler la zone affichée sur la TV';
+    return null;
+  });
+
   /** Position des poignées dans l'aperçu, en pixels (mode « Précis » seulement). */
   protected readonly handles = computed(() => {
     const frame = this.frame();
     const layout = this.previewLayout();
-    if (!this.store.preciseView() || !frame || !layout) return null;
+    if (!this.store.preciseView() || this.preciseUnavailable() || !frame || !layout) return null;
 
     const toPx = (x: number, y: number) => ({
       left: layout.originX + x * layout.cellPx,
@@ -180,7 +221,7 @@ export class BoardPreview {
   protected startPan(event: PointerEvent): void {
     const start = this.toCell(event);
     const camera = this.boundCamera(this.store.camera());
-    if (event.button !== 0 || !start || !camera) return;
+    if (event.button !== 0 || this.preciseUnavailable() || !start || !camera) return;
 
     this.capture(event);
     this.drag.set({ kind: 'pan', start, camera });

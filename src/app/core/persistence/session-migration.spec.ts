@@ -1,0 +1,58 @@
+import { createInitialGameState, type GameState } from '../models/game-state.model';
+import { restoreGameState, type SavedState } from './session-migration';
+
+describe('restoreGameState', () => {
+  it("convertit une sauvegarde à carte unique en session d'une carte affichée", () => {
+    const legacy: SavedState = {
+      revision: 42,
+      mapAssetId: 'image-1',
+      grid: { cols: 27, rows: 20, offsetX: 0, offsetY: 0 }, // sans mapCellPx
+      camera: { x: 13.5, y: 6 }, // sans zoom
+      fog: { enabled: true, ops: [] },
+      players: [],
+      dmNotes: 'Le traître est le forgeron',
+    };
+
+    const state = restoreGameState(legacy, 'foret_27x20');
+
+    expect(state.maps).toHaveLength(1);
+    expect(state.activeMapId).toBe(state.maps[0].id);
+    expect(state.selectedMapId).toBe(state.maps[0].id);
+    expect(state.maps[0]).toMatchObject({
+      assetId: 'image-1',
+      name: 'foret_27x20',
+      grid: { cols: 27, rows: 20, mapCellPx: 100 },
+      camera: { x: 13.5, y: 6, zoom: 1 },
+      fog: { enabled: true, ops: [] },
+    });
+    expect(state).toMatchObject({ revision: 42, dmNotes: 'Le traître est le forgeron' });
+    expect(state).not.toHaveProperty('mapAssetId');
+    expect(state).not.toHaveProperty('grid');
+  });
+
+  it("donne une session sans carte à une ancienne sauvegarde qui n'en avait pas", () => {
+    const state = restoreGameState({ mapAssetId: null, players: [] }, null);
+    expect(state.maps).toEqual([]);
+    expect(state.activeMapId).toBeNull();
+  });
+
+  it('reprend une sauvegarde à jour telle quelle', () => {
+    const current: GameState = {
+      ...createInitialGameState(),
+      maps: [
+        {
+          id: 'carte-1',
+          assetId: 'image-1',
+          name: 'Taverne',
+          grid: { cols: 30, rows: 20, mapCellPx: 140, offsetX: 0, offsetY: 0 },
+          camera: { x: 4, y: 5, zoom: 2 },
+          fog: { enabled: false, ops: [] },
+        },
+      ],
+      activeMapId: null,
+      preciseView: true,
+    };
+
+    expect(restoreGameState(current, null)).toEqual(current);
+  });
+});

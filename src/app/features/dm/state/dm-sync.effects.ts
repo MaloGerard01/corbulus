@@ -85,11 +85,11 @@ export class DmSyncEffects {
     await this.pruneAssets();
   }
 
-  /** Supprime les cartes remplacées ou appartenant à une session effacée. */
+  /** Supprime les cartes retirées de la session ou appartenant à une session effacée. */
   private async pruneAssets(): Promise<void> {
-    const mapAssetId = this.store.mapAssetId();
+    const usedAssetIds = this.store.maps().map((m) => m.assetId);
     try {
-      await this.assets.deleteUnused(mapAssetId ? [mapAssetId] : []);
+      await this.assets.deleteUnused(usedAssetIds);
     } catch (err) {
       console.error('Échec du nettoyage des fichiers importés', err);
     }

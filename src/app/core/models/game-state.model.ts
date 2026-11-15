@@ -70,33 +70,77 @@ export function centeredCamera(grid: Pick<GridConfig, 'cols' | 'rows'>): Camera 
   return { x: grid.cols / 2, y: grid.rows / 2, zoom: 1 };
 }
 
+/**
+ * Carte chargée dans la session, avec tout ce qui lui est propre : changer
+ * de carte puis y revenir retrouve sa grille, sa vue et son brouillard.
+ */
+export interface SessionMap {
+  id: string;
+  /** Image dans IndexedDB (voir AssetRepository). */
+  assetId: string;
+  name: string;
+  grid: GridConfig;
+  camera: Camera;
+  fog: FogState;
+}
+
+export const DEFAULT_GRID: Readonly<GridConfig> = {
+  cols: 24,
+  rows: 14,
+  mapCellPx: 100,
+  offsetX: 0,
+  offsetY: 0,
+};
+
+/**
+ * Ce que montre la TV quand aucune carte n'est affichée : une grille vierge.
+ * Constante (références stables) : le plateau n'est pas notifié pour rien.
+ */
+export const BLANK_MAP: Readonly<Pick<SessionMap, 'grid' | 'camera' | 'fog'>> = {
+  grid: DEFAULT_GRID,
+  camera: centeredCamera(DEFAULT_GRID),
+  fog: { enabled: false, ops: [] },
+};
+
 /** Source de vérité de la partie. N'existe que côté MJ. */
 export interface GameState {
   revision: number;
-  mapAssetId: string | null;
-  grid: GridConfig;
-  camera: Camera;
+  /** Cartes de la session, dans l'ordre d'import. */
+  maps: SessionMap[];
+  /** Carte affichée sur la TV ; `null` : grille vierge. */
+  activeMapId: string | null;
+  /**
+   * Carte en cours d'édition dans la vue MJ (aperçu, propriétés), affichée
+   * ou non sur la TV. Jamais envoyé au plateau.
+   */
+  selectedMapId: string | null;
   /**
    * Mode « Précis » de l'aperçu MJ : la zone affichée sur la TV peut être
    * redimensionnée (zoom). Jamais envoyé au plateau.
    */
   preciseView: boolean;
-  fog: FogState;
   players: Player[];
   /** Jamais envoyé au plateau. */
   dmNotes: string;
 }
 
 export function createInitialGameState(): GameState {
-  const grid: GridConfig = { cols: 24, rows: 14, mapCellPx: 100, offsetX: 0, offsetY: 0 };
   return {
     revision: 0,
-    mapAssetId: null,
-    grid,
-    camera: centeredCamera(grid),
+    maps: [],
+    activeMapId: null,
+    selectedMapId: null,
     preciseView: false,
-    fog: { enabled: false, ops: [] },
     players: [],
     dmNotes: '',
   };
+}
+
+export function findMap(state: GameState, id: string | null): SessionMap | null {
+  return state.maps.find((m) => m.id === id) ?? null;
+}
+
+/** Nom affiché d'une carte : le nom du fichier, sans extension. */
+export function mapNameFromFile(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '') || fileName;
 }

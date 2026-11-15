@@ -1,16 +1,20 @@
 import { Injectable, computed, signal } from '@angular/core';
 
 import {
+  BLANK_MAP,
+  DEFAULT_GRID,
   SEATS,
   centeredCamera,
   createInitialGameState,
+  findMap,
   type Camera,
   type FogOp,
   type GameState,
   type GridConfig,
   type Player,
+  type SessionMap,
 } from '../../../core/models/game-state.model';
-import { sameBoardView, toBoardView } from './to-board-view';
+import { mapView, sameBoardView, toBoardView } from './to-board-view';
 
 const PLAYER_COLORS = [
   '#e6194b',
@@ -28,6 +32,12 @@ const MAX_GRID_SIZE = 200;
 
 export type PlayerPatch = Partial<Omit<Player, 'id'>>;
 
+export interface NewMap {
+  assetId: string;
+  name: string;
+  grid?: Partial<GridConfig>;
+}
+
 /**
  * Source de vérité de la partie. Fourni uniquement par les routes MJ.
  * Toutes les mises à jour sont immuables : ne jamais muter l'état en place.
@@ -38,13 +48,23 @@ export class GameStore {
 
   readonly state = this._state.asReadonly();
   readonly players = computed(() => this._state().players);
-  readonly mapAssetId = computed(() => this._state().mapAssetId);
-  readonly grid = computed(() => this._state().grid);
-  readonly camera = computed(() => this._state().camera);
+  readonly maps = computed(() => this._state().maps);
+  /** Carte affichée sur la TV, `null` pour la grille vierge. */
+  readonly activeMap = computed(() => findMap(this._state(), this._state().activeMapId));
+  /** Carte en cours d'édition dans la vue MJ, affichée ou non. */
+  readonly selectedMap = computed(() => findMap(this._state(), this._state().selectedMapId));
+  // Grille, vue et brouillard de la carte en édition (ceux de la grille vierge sinon).
+  readonly grid = computed(() => this.selectedMap()?.grid ?? BLANK_MAP.grid);
+  readonly camera = computed(() => this.selectedMap()?.camera ?? BLANK_MAP.camera);
+  readonly fog = computed(() => this.selectedMap()?.fog ?? BLANK_MAP.fog);
   readonly preciseView = computed(() => this._state().preciseView);
-  readonly fog = computed(() => this._state().fog);
   readonly dmNotes = computed(() => this._state().dmNotes);
+  /** Ce que reçoit le plateau : la carte affichée. */
   readonly boardView = computed(() => toBoardView(this._state()), {
+    equal: sameBoardView,
+  });
+  /** Ce que montre l'aperçu MJ : la carte en édition, même si elle n'est pas affichée. */
+  readonly selectedView = computed(() => mapView(this.selectedMap(), this.players()), {
     equal: sameBoardView,
   });
 
@@ -82,56 +102,105 @@ export class GameStore {
     this.mutate((s) => ({ ...s, players: s.players.filter((p) => p.id !== id) }));
   }
 
-  // --- Carte et grille -----------------------------------------------------
+  // --- Cartes de la session ------------------------------------------------
 
   /**
-   * Change de carte (ou la retire avec `null`). Les zones révélées de
-   * l'ancienne carte n'ont plus de sens : le brouillard repart de zéro,
-   * et la TV se recentre.
+   * Ajoute une carte à la session et la sélectionne pour l'éditer. Elle n'est
+   * pas affichée sur la TV : importer ne doit pas dévoiler une carte aux joueurs.
    */
-  setMap(mapAssetId: string | null, grid?: Partial<GridConfig>): void {
+  addMap({ assetId, name, grid }: NewMap): SessionMap {
+    const nextGrid = normalizeGrid({ ...DEFAULT_GRID, ...grid });
+    const map: SessionMap = {
+      id: crypto.randomUUID(),
+      assetId,
+      name,
+      grid: nextGrid,
+      camera: centeredCamera(nextGrid),
+      fog: { enabled: false, ops: [] },
+    };
+    this.mutate((s) => ({
+      ...s,
+      maps: [...s.maps, map],
+      selectedMapId: map.id,
+    }));
+    return map;
+  }
+
+  /**
+   * Sélectionne une carte pour l'éditer, sans toucher à la TV. Si sa vue
+   * était zoomée, le mode « Précis » se réactive pour qu'on puisse la régler.
+   */
+  selectMap(id: string | null): void {
     this.mutate((s) => {
-      const nextGrid = grid ? normalizeGrid({ ...s.grid, ...grid }) : s.grid;
+      const map = findMap(s, id);
       return {
         ...s,
-        mapAssetId,
-        grid: nextGrid,
-        camera: centeredCamera(nextGrid),
-        fog: { ...s.fog, ops: [] },
+        selectedMapId: map?.id ?? null,
+        preciseView: s.preciseView || (map !== null && map.camera.zoom !== 1),
       };
     });
   }
 
+  /** Affiche une carte sur la TV (`null` : grille vierge), telle qu'on l'a préparée. */
+  activateMap(id: string | null): void {
+    this.mutate((s) => ({ ...s, activeMapId: findMap(s, id)?.id ?? null }));
+  }
+
+  /**
+   * Retire une carte. Si elle était affichée, la TV passe à la grille vierge ;
+   * si elle était en édition, on passe à celle qui est affichée.
+   */
+  removeMap(id: string): void {
+    this.mutate((s) => {
+      const activeMapId = s.activeMapId === id ? null : s.activeMapId;
+      return {
+        ...s,
+        maps: s.maps.filter((m) => m.id !== id),
+        activeMapId,
+        selectedMapId: s.selectedMapId === id ? activeMapId : s.selectedMapId,
+      };
+    });
+  }
+
+  // --- Carte en édition : grille et vue ------------------------------------
+
   updateGrid(patch: Partial<GridConfig>): void {
-    this.mutate((s) => ({ ...s, grid: normalizeGrid({ ...s.grid, ...patch }) }));
+    this.mutateSelectedMap((m) => ({ ...m, grid: normalizeGrid({ ...m.grid, ...patch }) }));
   }
 
-  /** Déplace la zone affichée sur la TV. Le renderer la ramène de toute façon dans la grille. */
+  /**
+   * Déplace la zone que la TV montre de cette carte (tout de suite si elle
+   * est affichée). Le renderer la ramène de toute façon dans la grille.
+   */
   setCamera(camera: Camera): void {
-    this.mutate((s) => ({ ...s, camera }));
+    this.mutateSelectedMap((m) => ({ ...m, camera }));
   }
 
-  /** Quitter le mode « Précis » ramène la TV à la carte entière (zoom 1). */
+  /** Quitter le mode « Précis » ramène la carte en édition à sa vue entière (zoom 1). */
   setPreciseView(preciseView: boolean): void {
     this.mutate((s) => ({
       ...s,
       preciseView,
-      camera: preciseView || s.camera.zoom === 1 ? s.camera : { ...s.camera, zoom: 1 },
+      maps: s.maps.map((m) =>
+        m.id === s.selectedMapId && !preciseView && m.camera.zoom !== 1
+          ? { ...m, camera: { ...m.camera, zoom: 1 } }
+          : m,
+      ),
     }));
   }
 
-  // --- Brouillard ----------------------------------------------------------
+  // --- Carte en édition : brouillard ---------------------------------------
 
   setFogEnabled(enabled: boolean): void {
-    this.mutate((s) => ({ ...s, fog: { ...s.fog, enabled } }));
+    this.mutateSelectedMap((m) => ({ ...m, fog: { ...m.fog, enabled } }));
   }
 
   applyFog(op: FogOp): void {
-    this.mutate((s) => ({ ...s, fog: { ...s.fog, ops: [...s.fog.ops, op] } }));
+    this.mutateSelectedMap((m) => ({ ...m, fog: { ...m.fog, ops: [...m.fog.ops, op] } }));
   }
 
   undoFog(): void {
-    this.mutate((s) => ({ ...s, fog: { ...s.fog, ops: s.fog.ops.slice(0, -1) } }));
+    this.mutateSelectedMap((m) => ({ ...m, fog: { ...m.fog, ops: m.fog.ops.slice(0, -1) } }));
   }
 
   // --- Divers --------------------------------------------------------------
@@ -149,6 +218,15 @@ export class GameStore {
   }
 
   // --- Interne -------------------------------------------------------------
+
+  /** Sans carte en édition, il n'y a rien à modifier. */
+  private mutateSelectedMap(fn: (m: SessionMap) => SessionMap): void {
+    if (!this.selectedMap()) return;
+    this.mutate((s) => ({
+      ...s,
+      maps: s.maps.map((m) => (m.id === s.selectedMapId ? fn(m) : m)),
+    }));
+  }
 
   private mutatePlayer(id: string, fn: (p: Player) => Player): void {
     this.mutate((s) => ({
