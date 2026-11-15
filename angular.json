@@ -10,7 +10,9 @@
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
-          "style": "scss"
+          "inlineTemplate": true,
+          "inlineStyle": true,
+          "style": "none"
         }
       },
       "root": "",
@@ -29,9 +31,8 @@
                 "input": "public"
               }
             ],
-            "styles": [
-              "src/styles.scss"
-            ]
+            "styles": ["src/tailwind.css"],
+            "allowedCommonJsDependencies": ["@xmldom/xmldom"]
           },
           "configurations": {
             "production": {

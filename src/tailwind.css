@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-surface-0: #0e0e13;
+  --color-surface-1: #16161d;
+  --color-surface-2: #20202a;
+  --color-border: #33333f;
+  --color-text: #ececf1;
+  --color-muted: #9a9aa8;
+  --color-accent: #7c6cf0;
+  --color-danger: #e5484d;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-surface-0 font-sans text-text;
+  }
+}
+
+/*
+ * Utilitaires maison pour les éléments répétés partout dans la vue MJ.
+ * Ils s'utilisent comme n'importe quelle classe Tailwind, variantes comprises
+ * (hover:, md:…).
+ */
+@utility btn {
+  @apply cursor-pointer rounded-md border border-border bg-surface-2 px-2.5 py-1 text-text hover:border-accent;
+}
+
+@utility btn-danger {
+  @apply hover:border-danger hover:text-danger;
+}
+
+@utility field {
+  @apply rounded-md border border-border bg-surface-0 px-2 py-1 text-text;
+}
+
+@utility panel {
+  @apply rounded-lg border border-border bg-surface-1 p-4;
+}
