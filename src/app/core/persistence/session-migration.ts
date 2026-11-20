@@ -8,8 +8,10 @@ import {
   type FogOp,
   type GameState,
   type GridConfig,
+  type MapKind,
   type SessionMap,
 } from '../models/game-state.model';
+import { createPlayback, type VideoPlayback } from '../models/video-playback';
 
 /** Brouillard sauvegardé : peut contenir des opérations d'un ancien format. */
 interface SavedFog {
@@ -18,10 +20,12 @@ interface SavedFog {
 }
 
 /** Carte telle que sauvegardée, éventuellement avant l'ajout de certains champs. */
-type SavedMap = Omit<SessionMap, 'grid' | 'camera' | 'fog'> & {
+type SavedMap = Omit<SessionMap, 'grid' | 'camera' | 'fog' | 'kind' | 'playback'> & {
   grid?: Partial<GridConfig>;
   camera?: Partial<Camera>;
   fog?: SavedFog;
+  kind?: MapKind;
+  playback?: VideoPlayback | null;
 };
 
 /** Sauvegarde antérieure aux cartes multiples : une seule carte, au niveau de l'état. */
@@ -73,8 +77,13 @@ function legacyMaps(saved: LegacySingleMap, name: string | null): SavedMap[] {
 
 function normalizeMap(map: SavedMap): SessionMap {
   const grid = { ...DEFAULT_GRID, ...map.grid };
+  // Avant les cartes animées, toutes étaient des images.
+  const kind = map.kind ?? 'image';
   return {
     ...map,
+    kind,
+    // Champs de lecture ajoutés depuis (volume…) : valeurs par défaut.
+    playback: kind === 'video' ? { ...createPlayback(Date.now()), ...map.playback } : null,
     grid,
     camera: { ...centeredCamera(grid), ...map.camera },
     fog: {

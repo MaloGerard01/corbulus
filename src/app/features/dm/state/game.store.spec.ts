@@ -177,6 +177,40 @@ describe('GameStore', () => {
     expect(store.grid()).toEqual({ cols: 1, rows: 200, mapCellPx: 1, offsetX: 0, offsetY: 0 });
   });
 
+  describe('cartes animées', () => {
+    it('envoie au plateau la vidéo affichée, en plein écran, sans grille ni brouillard', () => {
+      const video = store.addMap({ assetId: 'video-1', name: 'Cascade', kind: 'video' });
+      store.activateMap(video.id);
+
+      expect(store.boardView()).toMatchObject({
+        mapAssetId: null,
+        fog: { enabled: false },
+        animated: { kind: 'video', assetId: 'video-1', playback: { playing: true, muted: true } },
+      });
+    });
+
+    it('commande la lecture de la vidéo en édition, et seulement d’une vidéo', () => {
+      store.addMap({ assetId: 'video-1', name: 'Cascade', kind: 'video' });
+      const playback = store.selectedMap()!.playback!;
+      store.setPlayback({ ...playback, muted: false });
+      expect(store.selectedMap()?.playback?.muted).toBe(false);
+
+      store.addMap({ assetId: 'image-1', name: 'Taverne' });
+      store.setPlayback({ ...playback, playing: false });
+      expect(store.selectedMap()?.playback).toBeNull();
+    });
+
+    it('ne renvoie rien au plateau tant que la lecture ne change pas', () => {
+      const gif = store.addMap({ assetId: 'gif-1', name: 'Feu', kind: 'gif' });
+      store.activateMap(gif.id);
+      const before = store.boardView();
+
+      store.setDmNotes('Le feu cache un passage');
+
+      expect(store.boardView()).toBe(before);
+    });
+  });
+
   describe('brouillard', () => {
     beforeEach(() => store.addMap({ assetId: 'image-1', name: 'Taverne' }));
 

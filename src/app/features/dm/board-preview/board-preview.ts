@@ -17,6 +17,7 @@ import {
 } from '../../../core/models/game-state.model';
 import { computeLayout, visibleCells, type CellPoint } from '../../../renderer/layout';
 import { RENDER_STYLES } from '../../../renderer/render-style';
+import { AnimatedMap } from '../../../shared/animated-map';
 import { BoardCanvas } from '../../../shared/board-canvas';
 import { DmSyncEffects } from '../state/dm-sync.effects';
 import { GameStore } from '../state/game.store';
@@ -60,7 +61,7 @@ const STROKE_POINT_STEP = 0.1;
  */
 @Component({
   selector: 'app-board-preview',
-  imports: [BoardCanvas, PreviewToolbar],
+  imports: [AnimatedMap, BoardCanvas, PreviewToolbar],
   host: { '(document:keydown)': 'onKeydown($event)' },
   template: `
     <section class="panel">
@@ -109,6 +110,11 @@ const STROKE_POINT_STEP = 0.1;
             [view]="store.selectedView()"
             [frame]="frame()"
           />
+
+          <!-- Carte animée : montrée en entier et sans le son (il ne sort que sur la TV). -->
+          @if (store.selectedView().animated; as media) {
+            <app-animated-map class="absolute inset-0" fit="contain" [media]="media" />
+          }
 
           @if (handles(); as handles) {
             @for (corner of corners; track corner) {
@@ -177,8 +183,13 @@ export class BoardPreview {
   /** Position du pointeur dans l'aperçu, en pixels (`null` hors de l'aperçu). */
   protected readonly hover = signal<{ x: number; y: number } | null>(null);
 
+  /** Carte en édition animée (GIF, vidéo) : plein écran, sans cadrage ni brouillard. */
+  private readonly isAnimated = computed(() => this.store.selectedView().animated !== null);
+
   /** Outil actif sur l'aperçu, décidé par la section ouverte de la barre d'outils. */
   protected readonly tool = computed<'pan' | BrushMode | null>(() => {
+    // Carte animée : ni cadrage ni brouillard, l'aperçu reste en lecture seule.
+    if (this.isAnimated()) return null;
     switch (this.section()) {
       case 'display':
         return 'pan';
@@ -203,7 +214,8 @@ export class BoardPreview {
   /** Zone visible sur la TV, calculée exactement comme le fait le renderer du plateau. */
   protected readonly frame = computed(() => {
     const viewport = this.boardViewport();
-    if (!viewport) return null;
+    // Une carte animée remplit tout l'écran : pas de zone à encadrer.
+    if (!viewport || this.isAnimated()) return null;
     return visibleCells(
       viewport.width,
       viewport.height,
@@ -222,6 +234,7 @@ export class BoardPreview {
   /** Pourquoi la vue de la TV ne peut pas être réglée (`null` : elle peut l'être). */
   protected readonly preciseUnavailable = computed(() => {
     if (!this.store.selectedMap()) return 'Sélectionnez une carte pour régler sa vue';
+    if (this.isAnimated()) return "Une carte animée remplit tout l'écran";
     if (!this.frame()) return 'Ouvrez le plateau pour régler la zone affichée sur la TV';
     return null;
   });

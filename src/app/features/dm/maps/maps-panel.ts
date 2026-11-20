@@ -28,7 +28,7 @@ import { MapSettings } from './map-settings';
           {{ importing() ? 'Import…' : '+ Importer' }}
           <input
             type="file"
-            accept="image/*"
+            accept="image/*,video/*"
             multiple
             class="sr-only"
             [disabled]="importing()"
@@ -56,7 +56,8 @@ import { MapSettings } from './map-settings';
         </div>
       } @else {
         <p class="text-sm text-muted">
-          Aucune carte : la TV affiche une grille vierge. Importez une ou plusieurs images.
+          Aucune carte : la TV affiche une grille vierge. Importez des images, des GIF ou des
+          vidéos.
         </p>
       }
 
@@ -87,12 +88,14 @@ export class MapsPanel {
     const failed: string[] = [];
     for (const file of files) {
       try {
-        // L'image est en base avant que l'état (et donc le plateau) ne la référence.
-        const asset = await this.assets.addImage(file, file.name);
+        // Le fichier est en base avant que l'état (et donc le plateau) ne le référence.
+        const asset = await this.assets.addMedia(file, file.name);
         this.store.addMap({
           assetId: asset.id,
           name: mapNameFromFile(file.name),
-          grid: guessMapGrid(asset, file.name, this.store.grid().cols),
+          kind: asset.kind,
+          // Seules les cartes fixes ont une grille ; les animées remplissent l'écran.
+          grid: asset.kind === 'image' ? guessMapGrid(asset, file.name, this.store.grid().cols) : undefined,
         });
       } catch (err) {
         console.error(`Échec de l'import de ${file.name}`, err);
@@ -100,7 +103,9 @@ export class MapsPanel {
       }
     }
     if (failed.length) {
-      this.error.set(`Impossible d'importer ${failed.join(', ')} : est-ce bien une image ?`);
+      this.error.set(
+        `Impossible d'importer ${failed.join(', ')} : est-ce bien une image, un GIF ou une vidéo lisible ?`,
+      );
     }
     this.importing.set(false);
   }

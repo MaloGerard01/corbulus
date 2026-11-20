@@ -1,6 +1,6 @@
 import { Component, computed, effect, inject, input, output, resource, signal } from '@angular/core';
 
-import type { SessionMap } from '../../../core/models/game-state.model';
+import { MAP_KIND_LABELS, type SessionMap } from '../../../core/models/game-state.model';
 import type { BoardViewport } from '../../../core/models/sync-message.model';
 import { AssetRepository } from '../../../core/persistence/asset.repository';
 import { visibleImageZone } from './visible-zone';
@@ -57,6 +57,15 @@ import { visibleImageZone } from './visible-zone';
           A l'écran
         </span>
       }
+
+      @if (map().kind !== 'image') {
+        <span
+          data-kind
+          class="absolute right-1.5 bottom-1.5 rounded bg-black/75 px-1.5 py-0.5 text-xs font-semibold text-white"
+        >
+          {{ map().kind === 'video' ? '▶ ' : '' }}{{ kindLabels[map().kind] }}
+        </span>
+      }
     </button>
 
     <div class="flex items-center gap-1.5">
@@ -84,6 +93,8 @@ export class MapCard {
   readonly select = output<void>();
   readonly remove = output<void>();
 
+  protected readonly kindLabels = MAP_KIND_LABELS;
+
   private readonly assets = inject(AssetRepository);
 
   private readonly preview = resource({
@@ -98,7 +109,8 @@ export class MapCard {
   protected readonly overlay = computed(() => {
     const viewport = this.viewport();
     const image = this.image();
-    if (!viewport || !image) return null;
+    // Une carte animée remplit tout l'écran : pas de zone à montrer.
+    if (!viewport || !image || this.map().kind !== 'image') return null;
 
     const zone = visibleImageZone(viewport, this.map(), image);
     const { width, height } = image;

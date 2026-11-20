@@ -2,8 +2,11 @@ import { Injectable } from '@angular/core';
 
 import { db, type AssetRecord } from './db';
 
+/** Nature d'un fichier importé. */
+export type MediaKind = 'image' | 'gif' | 'video';
+
 /** Métadonnées d'un fichier importé, sans son contenu. */
-export type AssetInfo = Omit<AssetRecord, 'blob' | 'thumbnail'>;
+export type AssetInfo = Omit<AssetRecord, 'blob' | 'thumbnail' | 'kind'> & { kind: MediaKind };
 
 /** De quoi afficher l'aperçu d'une image dans la galerie. */
 export interface AssetPreview {
@@ -19,6 +22,21 @@ const THUMBNAIL_MAX_PX = 480;
 /** En deçà de cet âge, un fichier n'est jamais supprimé par le nettoyage. */
 const RECENT_ASSET_MS = 60 * 60 * 1000;
 
+/** Délai maximal pour lire les métadonnées d'une vidéo à l'import. */
+const PROBE_TIMEOUT_MS = 15_000;
+
+/** Extensions reconnues quand le système ne donne pas le type du fichier. */
+const VIDEO_EXTENSIONS = /\.(mp4|m4v|webm|mov|ogv|mkv)$/i;
+
+/** Ce qu'il faut savoir d'un fichier pour l'enregistrer. */
+interface ProbedMedia {
+  width: number;
+  height: number;
+  duration: number | null;
+  /** Image représentative, pour la vignette. */
+  frame: ImageBitmap;
+}
+
 /**
  * Fichiers importés (cartes…), stockés en Blob dans IndexedDB.
  * Seul leur identifiant circule dans l'état et vers le plateau : la vue MJ
@@ -27,24 +45,27 @@ const RECENT_ASSET_MS = 60 * 60 * 1000;
 @Injectable({ providedIn: 'root' })
 export class AssetRepository {
   /**
-   * Enregistre une image avec sa vignette. Le décodage préalable vérifie que
-   * le fichier est bien une image lisible et donne ses dimensions.
+   * Enregistre une image, un GIF ou une vidéo, avec sa vignette. Le décodage
+   * préalable vérifie que le fichier est lisible et donne ses dimensions.
    */
-  async addImage(file: Blob, name: string): Promise<AssetInfo> {
-    const bitmap = await createImageBitmap(file);
+  async addMedia(file: Blob, name: string): Promise<AssetInfo> {
+    const kind = mediaKind(file, name);
+    const probed = kind === 'video' ? await probeVideo(file) : await probeImage(file);
     try {
       const info: AssetInfo = {
         id: crypto.randomUUID(),
         name,
-        width: bitmap.width,
-        height: bitmap.height,
+        kind,
+        width: probed.width,
+        height: probed.height,
+        duration: probed.duration,
         createdAt: Date.now(),
       };
-      const thumbnail = await createThumbnail(bitmap);
+      const thumbnail = await createThumbnail(probed.frame);
       await db.assets.add({ ...info, blob: file, thumbnail });
       return info;
     } finally {
-      bitmap.close();
+      probed.frame.close();
     }
   }
 
@@ -52,7 +73,7 @@ export class AssetRepository {
     const record = await db.assets.get(id);
     if (!record) return null;
     const { blob: _blob, thumbnail: _thumbnail, ...info } = record;
-    return info;
+    return { ...info, kind: record.kind ?? 'image' };
   }
 
   /** Vignette (l'image entière pour les anciens fichiers) et dimensions de l'image. */
@@ -64,6 +85,11 @@ export class AssetRepository {
       width: record.width,
       height: record.height,
     };
+  }
+
+  /** Contenu du fichier, pour le lire tel quel (GIF, vidéo). `null` s'il n'existe plus. */
+  async getBlob(id: string): Promise<Blob | null> {
+    return (await db.assets.get(id))?.blob ?? null;
   }
 
   /** Image décodée, prête pour le renderer. `null` si l'asset n'existe plus. */
@@ -88,6 +114,73 @@ export class AssetRepository {
     await db.assets.bulkDelete(unused);
     return unused.length;
   }
+}
+
+/** Type du fichier, d'après son type MIME ou, à défaut, son extension. */
+export function mediaKind(file: Blob, name: string): MediaKind {
+  if (file.type === 'image/gif' || /\.gif$/i.test(name)) return 'gif';
+  if (file.type.startsWith('video/') || VIDEO_EXTENSIONS.test(name)) return 'video';
+  return 'image';
+}
+
+/** Image ou GIF : la première image donne les dimensions et la vignette. */
+async function probeImage(file: Blob): Promise<ProbedMedia> {
+  const frame = await createImageBitmap(file);
+  return { width: frame.width, height: frame.height, duration: null, frame };
+}
+
+/**
+ * Vidéo : dimensions et durée lues dans ses métadonnées ; la vignette est
+ * prise un peu après le début (la toute première image est souvent noire).
+ */
+async function probeVideo(file: Blob): Promise<ProbedMedia> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.preload = 'auto';
+  try {
+    const loaded = nextEvent(video, 'loadeddata');
+    video.src = url;
+    await loaded;
+
+    const duration = Number.isFinite(video.duration) ? video.duration : null;
+    const seeked = nextEvent(video, 'seeked');
+    video.currentTime = duration ? Math.min(1, duration / 10) : 0.1;
+    await seeked;
+
+    const frame = await createImageBitmap(video);
+    return { width: video.videoWidth, height: video.videoHeight, duration, frame };
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Attend un événement de la vidéo ; échoue si elle ne peut pas être lue, ou
+ * si le navigateur ne répond pas (format qu'il ne sait pas décoder…).
+ */
+function nextEvent(video: HTMLVideoElement, type: 'loadeddata' | 'seeked'): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Vidéo illisible (délai dépassé)')), PROBE_TIMEOUT_MS);
+    video.addEventListener(
+      type,
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      { once: true },
+    );
+    video.addEventListener(
+      'error',
+      () => {
+        clearTimeout(timeout);
+        reject(video.error ?? new Error('Vidéo illisible'));
+      },
+      { once: true },
+    );
+  });
 }
 
 /** Réduit l'image : la galerie n'a pas à décoder des cartes de plusieurs Mo. */

@@ -28,6 +28,7 @@ function boardView(mapAssetId: string | null): BoardView {
     grid: { cols: 24, rows: 14, mapCellPx: 100, offsetX: 0, offsetY: 0 },
     camera: { x: 12, y: 7, zoom: 1 },
     fog: { enabled: false, ops: [] },
+    animated: null,
     players: [],
   };
 }

@@ -2,7 +2,7 @@ import { signal, type WritableSignal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 
 import type { BoardViewport } from '../../../core/models/sync-message.model';
-import { AssetRepository } from '../../../core/persistence/asset.repository';
+import { AssetRepository, mediaKind } from '../../../core/persistence/asset.repository';
 import { DmSyncEffects } from '../state/dm-sync.effects';
 import { GameStore } from '../state/game.store';
 import { MapsPanel } from './maps-panel';
@@ -13,7 +13,7 @@ URL.revokeObjectURL ??= () => undefined;
 
 describe('MapsPanel', () => {
   let assets: {
-    addImage: ReturnType<typeof vi.fn<AssetRepository['addImage']>>;
+    addMedia: ReturnType<typeof vi.fn<AssetRepository['addMedia']>>;
     getInfo: ReturnType<typeof vi.fn<AssetRepository['getInfo']>>;
     getPreview: ReturnType<typeof vi.fn<AssetRepository['getPreview']>>;
   };
@@ -24,17 +24,20 @@ describe('MapsPanel', () => {
     boardViewport = signal<BoardViewport | null>(null);
     let next = 0;
     assets = {
-      // Chaque image importée mesure 3000 × 2000 px.
-      addImage: vi.fn<AssetRepository['addImage']>(async (_file, name) => ({
+      // Chaque fichier importé mesure 3000 × 2000 px ; son type vient de son nom.
+      addMedia: vi.fn<AssetRepository['addMedia']>(async (file, name) => ({
         id: `image-${++next}`,
         name,
+        kind: mediaKind(file, name),
         width: 3000,
         height: 2000,
+        duration: mediaKind(file, name) === 'video' ? 90 : null,
         createdAt: 0,
       })),
       getInfo: vi.fn<AssetRepository['getInfo']>(async (id) => ({
         id,
         name: id,
+        kind: 'image',
         width: 3000,
         height: 2000,
         createdAt: 0,
@@ -99,8 +102,23 @@ describe('MapsPanel', () => {
     expect(store.selectedMap()?.name).toBe('crypte');
   });
 
+  it('importe GIF et vidéos comme cartes animées', async () => {
+    const fixture = await render();
+    expect(fixture.nativeElement.querySelector('input[type=file]').accept).toContain('video/*');
+
+    selectFiles(fixture, 'cascade.mp4', 'feu.gif');
+
+    await until(fixture, () => expect(cards(fixture)).toHaveLength(2));
+    expect(store.maps().map((m) => m.kind)).toEqual(['video', 'gif']);
+    // Une vidéo démarre en boucle, en lecture, sans le son ; un GIF n'a pas de commandes.
+    expect(store.maps()[0].playback).toMatchObject({ playing: true, loop: true, muted: true });
+    expect(store.maps()[1].playback).toBeNull();
+    expect(cards(fixture)[0].querySelector('[data-kind]')?.textContent).toContain('Vidéo');
+    expect(cards(fixture)[1].querySelector('[data-kind]')?.textContent).toContain('GIF');
+  });
+
   it('signale les fichiers illisibles sans bloquer les autres', async () => {
-    assets.addImage.mockRejectedValueOnce(new DOMException('Image illisible'));
+    assets.addMedia.mockRejectedValueOnce(new DOMException('Image illisible'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const fixture = await render();
 

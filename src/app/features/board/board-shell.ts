@@ -2,6 +2,7 @@ import { Component, computed, inject, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 
 import { SEATS, type Seat } from '../../core/models/game-state.model';
+import { AnimatedMap } from '../../shared/animated-map';
 import { BoardCanvas } from '../../shared/board-canvas';
 import { BoardState } from './board-state';
 import { PlayerCorner } from './hud/player-corner';
@@ -21,13 +22,18 @@ const SIDE_CLASSES: Record<Seat, string> = {
 
 @Component({
   selector: 'app-board-shell',
-  imports: [BoardCanvas, PlayerCorner],
+  imports: [AnimatedMap, BoardCanvas, PlayerCorner],
   host: {
     class: 'fixed inset-0 cursor-none overflow-hidden bg-black select-none',
     '(dblclick)': 'toggleFullscreen()',
   },
   template: `
     <app-board-canvas class="absolute inset-0" mode="board" [view]="view()" />
+
+    <!-- Carte animée (GIF, vidéo) : plein écran, par-dessus la grille vierge. -->
+    @if (view()?.animated; as media) {
+      <app-animated-map class="absolute inset-0" fit="cover" [withSound]="true" [media]="media" />
+    }
 
     @if (!view()) {
       <p class="absolute inset-0 grid place-items-center text-2xl text-neutral-600">

@@ -1,6 +1,7 @@
 import { Component, computed, inject, resource } from '@angular/core';
 
-import type { GridConfig } from '../../../core/models/game-state.model';
+import { MAP_KIND_LABELS, type GridConfig } from '../../../core/models/game-state.model';
+import { formatDuration } from '../../../core/models/video-playback';
 import { AssetRepository } from '../../../core/persistence/asset.repository';
 import { GameStore } from '../state/game.store';
 import { fitGridToMap } from './map-grid';
@@ -21,8 +22,14 @@ type GridField = keyof GridConfig;
           <h3 class="truncate font-semibold" [title]="map.name">{{ map.name }}</h3>
           <p class="text-sm text-muted">
             {{ onScreen() ? "Affichée à l'écran" : 'Non affichée' }}
+            @if (map.kind !== 'image') {
+              · {{ kindLabels[map.kind] }}
+            }
             @if (image(); as image) {
               · {{ image.width }} × {{ image.height }} px
+              @if (image.duration) {
+                · {{ formatDuration(image.duration) }}
+              }
             }
           </p>
         </div>
@@ -38,64 +45,66 @@ type GridField = keyof GridConfig;
       </div>
     }
 
-    <div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-      <label class="grid gap-1">
-        <span class="text-muted">Colonnes</span>
-        <input
-          type="number"
-          min="1"
-          class="field"
-          [value]="grid().cols"
-          (change)="setGrid('cols', $event)"
-        />
-      </label>
-      <label class="grid gap-1">
-        <span class="text-muted">Lignes</span>
-        <input
-          type="number"
-          min="1"
-          class="field"
-          [value]="grid().rows"
-          (change)="setGrid('rows', $event)"
-        />
-      </label>
-      <label class="grid gap-1">
-        <span class="text-muted">Case dans l'image (px)</span>
-        <input
-          type="number"
-          min="1"
-          step="any"
-          class="field"
-          [value]="grid().mapCellPx"
-          (change)="setGrid('mapCellPx', $event)"
-        />
-      </label>
-      <label class="grid gap-1">
-        <span class="text-muted">Décalage X (cases)</span>
-        <input
-          type="number"
-          step="0.1"
-          class="field"
-          [value]="grid().offsetX"
-          (change)="setGrid('offsetX', $event)"
-        />
-      </label>
-      <label class="grid gap-1">
-        <span class="text-muted">Décalage Y (cases)</span>
-        <input
-          type="number"
-          step="0.1"
-          class="field"
-          [value]="grid().offsetY"
-          (change)="setGrid('offsetY', $event)"
-        />
-      </label>
-    </div>
+    @if (!isAnimated()) {
+      <div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+        <label class="grid gap-1">
+          <span class="text-muted">Colonnes</span>
+          <input
+            type="number"
+            min="1"
+            class="field"
+            [value]="grid().cols"
+            (change)="setGrid('cols', $event)"
+          />
+        </label>
+        <label class="grid gap-1">
+          <span class="text-muted">Lignes</span>
+          <input
+            type="number"
+            min="1"
+            class="field"
+            [value]="grid().rows"
+            (change)="setGrid('rows', $event)"
+          />
+        </label>
+        <label class="grid gap-1">
+          <span class="text-muted">Case dans l'image (px)</span>
+          <input
+            type="number"
+            min="1"
+            step="any"
+            class="field"
+            [value]="grid().mapCellPx"
+            (change)="setGrid('mapCellPx', $event)"
+          />
+        </label>
+        <label class="grid gap-1">
+          <span class="text-muted">Décalage X (cases)</span>
+          <input
+            type="number"
+            step="0.1"
+            class="field"
+            [value]="grid().offsetX"
+            (change)="setGrid('offsetX', $event)"
+          />
+        </label>
+        <label class="grid gap-1">
+          <span class="text-muted">Décalage Y (cases)</span>
+          <input
+            type="number"
+            step="0.1"
+            class="field"
+            [value]="grid().offsetY"
+            (change)="setGrid('offsetY', $event)"
+          />
+        </label>
+      </div>
 
-    @if (image(); as image) {
-      <button type="button" class="btn justify-self-start" (click)="fitToMap(image)">
-        Ajuster la grille à la carte
-      </button>
+      @if (image(); as image) {
+        <button type="button" class="btn justify-self-start" (click)="fitToMap(image)">
+          Ajuster la grille à la carte
+        </button>
+      }
     }
   `,
 })
@@ -104,6 +113,12 @@ export class MapSettings {
   private readonly assets = inject(AssetRepository);
 
   protected readonly grid = this.store.grid;
+  protected readonly kindLabels = MAP_KIND_LABELS;
+  protected readonly formatDuration = formatDuration;
+  protected readonly isAnimated = computed(() => {
+    const kind = this.store.selectedMap()?.kind;
+    return kind !== undefined && kind !== 'image';
+  });
   protected readonly onScreen = computed(() => {
     const selected = this.store.selectedMap();
     return selected !== null && selected.id === this.store.activeMap()?.id;

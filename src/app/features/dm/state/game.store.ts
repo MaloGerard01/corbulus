@@ -13,9 +13,11 @@ import {
   type FogStyle,
   type GameState,
   type GridConfig,
+  type MapKind,
   type Player,
   type SessionMap,
 } from '../../../core/models/game-state.model';
+import { createPlayback, type VideoPlayback } from '../../../core/models/video-playback';
 import { mapView, sameBoardView, toBoardView } from './to-board-view';
 
 const PLAYER_COLORS = [
@@ -37,6 +39,8 @@ export type PlayerPatch = Partial<Omit<Player, 'id'>>;
 export interface NewMap {
   assetId: string;
   name: string;
+  /** Image par défaut. */
+  kind?: MapKind;
   grid?: Partial<GridConfig>;
 }
 
@@ -115,12 +119,14 @@ export class GameStore {
    * Ajoute une carte à la session et la sélectionne pour l'éditer. Elle n'est
    * pas affichée sur la TV : importer ne doit pas dévoiler une carte aux joueurs.
    */
-  addMap({ assetId, name, grid }: NewMap): SessionMap {
+  addMap({ assetId, name, kind = 'image', grid }: NewMap): SessionMap {
     const nextGrid = normalizeGrid({ ...DEFAULT_GRID, ...grid });
     const map: SessionMap = {
       id: crypto.randomUUID(),
       assetId,
       name,
+      kind,
+      playback: kind === 'video' ? createPlayback(Date.now()) : null,
       grid: nextGrid,
       camera: centeredCamera(nextGrid),
       // Actif mais vide : rien n'est caché tant que le MJ n'a pas peint.
@@ -182,6 +188,15 @@ export class GameStore {
    */
   setCamera(camera: Camera): void {
     this.mutateSelectedMap((m) => ({ ...m, camera }));
+  }
+
+  /**
+   * Lecture de la vidéo en édition (lecture, pause, position, boucle, son),
+   * construite avec les fonctions de video-playback.ts. Sans effet sur une
+   * image ou un GIF.
+   */
+  setPlayback(playback: VideoPlayback): void {
+    this.mutateSelectedMap((m) => (m.kind === 'video' ? { ...m, playback } : m));
   }
 
   /** Quitter le mode « Précis » ramène la carte en édition à sa vue entière (zoom 1). */

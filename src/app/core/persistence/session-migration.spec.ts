@@ -21,6 +21,8 @@ describe('restoreGameState', () => {
     expect(state.maps[0]).toMatchObject({
       assetId: 'image-1',
       name: 'foret_27x20',
+      kind: 'image',
+      playback: null,
       grid: { cols: 27, rows: 20, mapCellPx: 100 },
       camera: { x: 13.5, y: 6, zoom: 1 },
       fog: { enabled: true, ops: [] },
@@ -55,6 +57,25 @@ describe('restoreGameState', () => {
     ]);
   });
 
+  it("donne le volume maximal aux vidéos d'avant ce réglage", () => {
+    const playback = { playing: false, loop: true, muted: false, position: 12, at: 5 };
+    const state = restoreGameState(
+      {
+        maps: [
+          {
+            id: 'carte-1',
+            assetId: 'video-1',
+            name: 'Cascade',
+            kind: 'video',
+            playback: playback as never,
+          },
+        ],
+      },
+      null,
+    );
+    expect(state.maps[0].playback).toEqual({ ...playback, volume: 1 });
+  });
+
   it("donne une session sans carte à une ancienne sauvegarde qui n'en avait pas", () => {
     const state = restoreGameState({ mapAssetId: null, players: [] }, null);
     expect(state.maps).toEqual([]);
@@ -69,6 +90,8 @@ describe('restoreGameState', () => {
           id: 'carte-1',
           assetId: 'image-1',
           name: 'Taverne',
+          kind: 'image',
+          playback: null,
           grid: { cols: 30, rows: 20, mapCellPx: 140, offsetX: 0, offsetY: 0 },
           camera: { x: 4, y: 5, zoom: 2 },
           fog: { enabled: false, ops: [] },

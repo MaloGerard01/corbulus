@@ -1,3 +1,5 @@
+import type { VideoPlayback } from './video-playback';
+
 /** Côté de la table où est assis un joueur. Sert à orienter son HUD. */
 export type Seat = 'bottom' | 'top' | 'left' | 'right';
 
@@ -108,14 +110,32 @@ export function centeredCamera(grid: Pick<GridConfig, 'cols' | 'rows'>): Camera 
 }
 
 /**
+ * Nature d'une carte :
+ * - `image` : carte fixe, avec grille, cadrage et brouillard ;
+ * - `gif` : animée, lue en boucle, plein écran ;
+ * - `video` : animée, plein écran, lecture commandée par le MJ.
+ */
+export type MapKind = 'image' | 'gif' | 'video';
+
+export const MAP_KIND_LABELS: Record<MapKind, string> = {
+  image: 'Image',
+  gif: 'GIF',
+  video: 'Vidéo',
+};
+
+/**
  * Carte chargée dans la session, avec tout ce qui lui est propre : changer
  * de carte puis y revenir retrouve sa grille, sa vue et son brouillard.
  */
 export interface SessionMap {
   id: string;
-  /** Image dans IndexedDB (voir AssetRepository). */
+  /** Fichier dans IndexedDB (voir AssetRepository). */
   assetId: string;
   name: string;
+  kind: MapKind;
+  /** Lecture de la vidéo (`null` pour une image ou un GIF). */
+  playback: VideoPlayback | null;
+  /** Grille, cadrage et brouillard : cartes fixes seulement (ignorés si animée). */
   grid: GridConfig;
   camera: Camera;
   fog: FogState;
