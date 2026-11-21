@@ -1,44 +1,39 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, input } from '@angular/core';
 
-import type { Player } from '../../../core/models/game-state.model';
+import type { HudTheme, Player } from '../../../core/models/game-state.model';
+import { ClassicCard } from './classic-card';
+import { FantasyCard } from './fantasy-card';
+import { ScifiCard } from './scifi-card';
 
+/**
+ * HUD d'un joueur, dans le style choisi par le MJ (`hudTheme`). Tourné vers
+ * lui : nom, PV et PO. À gauche, pour les joueurs d'en face (donc à
+ * l'envers) : le portrait de son personnage (s'il en a un) et son nom.
+ */
 @Component({
   selector: 'app-player-corner',
+  imports: [ClassicCard, FantasyCard, ScifiCard],
   host: {
-    class:
-      'grid min-w-44 gap-1.5 rounded-lg border-2 border-(--player-color) bg-black/75 px-3 py-2.5 text-lg text-white',
+    class: 'block',
+    '[attr.data-theme]': 'theme()',
     '[class.opacity-50]': 'player().hp === 0',
     '[style.--player-color]': 'player().color',
   },
   template: `
-    <div class="font-bold text-(--player-color)">{{ player().name }}</div>
-
-    <div class="h-2 overflow-hidden rounded-full bg-neutral-800">
-      <div
-        class="h-full transition-[width,background-color] duration-300"
-        [class]="hpColorClass()"
-        [style.width.%]="hpPercent()"
-      ></div>
-    </div>
-
-    <div class="flex justify-between gap-4 tabular-nums">
-      <span>PV {{ player().hp }} / {{ player().hpMax }}</span>
-      <span>PO {{ player().gold }}</span>
-    </div>
+    @switch (theme()) {
+      @case ('fantasy') {
+        <app-fantasy-card [player]="player()" />
+      }
+      @case ('scifi') {
+        <app-scifi-card [player]="player()" />
+      }
+      @default {
+        <app-classic-card [player]="player()" />
+      }
+    }
   `,
 })
 export class PlayerCorner {
   readonly player = input.required<Player>();
-
-  protected readonly hpPercent = computed(() => {
-    const { hp, hpMax } = this.player();
-    return hpMax > 0 ? (hp / hpMax) * 100 : 0;
-  });
-
-  protected readonly hpColorClass = computed(() => {
-    const percent = this.hpPercent();
-    if (percent > 50) return 'bg-green-500';
-    if (percent > 25) return 'bg-amber-500';
-    return 'bg-red-500';
-  });
+  readonly theme = input<HudTheme>('classic');
 }

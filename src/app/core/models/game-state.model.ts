@@ -12,11 +12,33 @@ export const SEAT_LABELS: Record<Seat, string> = {
   right: 'Droite',
 };
 
+/** Style des cartes des joueurs sur la TV, pour s'accorder au jeu. */
+export type HudTheme = 'classic' | 'fantasy' | 'scifi';
+
+export const HUD_THEMES: readonly HudTheme[] = ['classic', 'fantasy', 'scifi'];
+
+export const HUD_THEME_LABELS: Record<HudTheme, string> = {
+  classic: 'Sobre',
+  fantasy: 'Médiéval-fantastique',
+  scifi: 'Science-fiction',
+};
+
 export interface Player {
   id: string;
   name: string;
   color: string;
+  /** Côté de l'écran où s'affiche son HUD, tourné vers le centre de la table. */
   seat: Seat;
+  /**
+   * Position personnalisée du HUD le long de son côté, de 0 (début) à 1
+   * (fin) dans le sens de l'écran : de gauche à droite en haut et en bas, de
+   * haut en bas à gauche et à droite. Le HUD reste entier à l'écran, à 0 il
+   * touche le coin de départ, à 1 celui d'arrivée. `null` : centré avec les
+   * autres joueurs du même côté.
+   */
+  seatPosition: number | null;
+  /** Portrait du personnage (image dans IndexedDB) ; `null` : aucun. */
+  portraitAssetId: string | null;
   hp: number;
   hpMax: number;
   gold: number;
@@ -171,6 +193,8 @@ export interface GameState {
    */
   preciseView: boolean;
   players: Player[];
+  /** Style des cartes de tous les joueurs. */
+  hudTheme: HudTheme;
   /** Jamais envoyé au plateau. */
   dmNotes: string;
 }
@@ -183,8 +207,20 @@ export function createInitialGameState(): GameState {
     selectedMapId: null,
     preciseView: false,
     players: [],
+    hudTheme: 'classic',
     dmNotes: '',
   };
+}
+
+/**
+ * Fichiers importés qu'utilise une session (cartes et portraits) : le
+ * nettoyage d'IndexedDB ne doit supprimer aucun d'eux.
+ */
+export function sessionAssetIds(state: Pick<GameState, 'maps' | 'players'>): string[] {
+  return [
+    ...state.maps.map((m) => m.assetId),
+    ...state.players.flatMap((p) => (p.portraitAssetId ? [p.portraitAssetId] : [])),
+  ];
 }
 
 export function findMap(state: GameState, id: string | null): SessionMap | null {

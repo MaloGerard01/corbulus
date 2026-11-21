@@ -3,6 +3,7 @@ import {
   BLANK_MAP,
   findMap,
   type GameState,
+  type HudTheme,
   type Player,
   type SessionMap,
 } from '../../../core/models/game-state.model';
@@ -13,14 +14,14 @@ import {
  * sans les notes du MJ.
  */
 export function toBoardView(state: GameState): BoardView {
-  return mapView(findMap(state, state.activeMapId), state.players);
+  return mapView(findMap(state, state.activeMapId), state.players, state.hudTheme);
 }
 
 /**
  * Vue d'une carte au format du plateau (`null` : grille vierge). Une carte
  * animée n'a ni grille ni brouillard : la grille vierge reste dessous.
  */
-export function mapView(map: SessionMap | null, players: Player[]): BoardView {
+export function mapView(map: SessionMap | null, players: Player[], hudTheme: HudTheme): BoardView {
   if (map && map.kind !== 'image') {
     return {
       mapAssetId: null,
@@ -29,6 +30,7 @@ export function mapView(map: SessionMap | null, players: Player[]): BoardView {
       fog: BLANK_MAP.fog,
       animated: { kind: map.kind, assetId: map.assetId, playback: map.playback },
       players,
+      hudTheme,
     };
   }
   return {
@@ -38,6 +40,7 @@ export function mapView(map: SessionMap | null, players: Player[]): BoardView {
     fog: map?.fog ?? BLANK_MAP.fog,
     animated: null,
     players,
+    hudTheme,
   };
 }
 
@@ -54,7 +57,8 @@ export function sameBoardView(a: BoardView, b: BoardView): boolean {
     a.camera === b.camera &&
     a.fog === b.fog &&
     sameAnimated(a.animated, b.animated) &&
-    a.players === b.players
+    a.players === b.players &&
+    a.hudTheme === b.hudTheme
   );
 }
 

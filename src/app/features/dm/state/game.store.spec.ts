@@ -24,7 +24,18 @@ describe('GameStore', () => {
   it('ajoute un joueur avec des valeurs par défaut', () => {
     store.addPlayer();
     expect(store.players()).toHaveLength(1);
-    expect(store.players()[0].hp).toBe(10);
+    expect(store.players()[0]).toMatchObject({ hp: 10, seatPosition: null, portraitAssetId: null });
+  });
+
+  it('borne la position personnalisée des infos entre 0 et 1', () => {
+    store.addPlayer();
+    const id = store.players()[0].id;
+
+    store.updatePlayer(id, { seat: 'left', seatPosition: 1.4 });
+    expect(store.players()[0]).toMatchObject({ seat: 'left', seatPosition: 1 });
+
+    store.updatePlayer(id, { seatPosition: Number.NaN });
+    expect(store.players()[0].seatPosition).toBeNull();
   });
 
   it('borne les PV entre 0 et le max', () => {
@@ -36,6 +47,15 @@ describe('GameStore', () => {
 
     store.adjustHp(id, 50);
     expect(store.players()[0].hp).toBe(10);
+  });
+
+  it('envoie le style des cartes choisi au plateau', () => {
+    expect(store.boardView().hudTheme).toBe('classic');
+
+    store.setHudTheme('scifi');
+
+    expect(store.hudTheme()).toBe('scifi');
+    expect(store.boardView().hudTheme).toBe('scifi');
   });
 
   it('ne change pas la vue plateau quand seules les notes changent', () => {

@@ -1,4 +1,4 @@
-import type { Camera, FogState, GridConfig, Player } from './game-state.model';
+import type { Camera, FogState, GridConfig, HudTheme, Player } from './game-state.model';
 import type { VideoPlayback } from './video-playback';
 
 /**
@@ -25,4 +25,6 @@ export interface BoardView {
   /** Carte animée affichée par-dessus (`null` : carte fixe ou grille vierge). */
   animated: AnimatedMapView | null;
   players: Player[];
+  /** Style des cartes des joueurs. */
+  hudTheme: HudTheme;
 }

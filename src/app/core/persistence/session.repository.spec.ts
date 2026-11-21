@@ -22,7 +22,19 @@ describe('summarizeSession', () => {
       updatedAt: 42,
       state: {
         ...state,
-        players: [{ id: 'p1', name: 'Aria', color: '#f00', seat: 'bottom', hp: 10, hpMax: 10, gold: 0 }],
+        players: [
+          {
+            id: 'p1',
+            name: 'Aria',
+            color: '#f00',
+            seat: 'bottom',
+            seatPosition: null,
+            portraitAssetId: null,
+            hp: 10,
+            hpMax: 10,
+            gold: 0,
+          },
+        ],
       },
     };
 

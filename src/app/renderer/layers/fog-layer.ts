@@ -1,12 +1,14 @@
 import {
   Container,
   Graphics,
+  Mesh,
+  MeshGeometry,
   RenderTexture,
   RendererType,
   Sprite,
   Texture,
-  TilingSprite,
   type Renderer,
+  type Shader,
   type WebGLRenderer,
 } from 'pixi.js';
 
@@ -19,7 +21,8 @@ import type {
   GridConfig,
 } from '../../core/models/game-state.model';
 import { brushDiameter, brushStamps, planFogUpdate, type FogPlan } from '../fog-ops';
-import { CLOUD_LIGHT, brushPixels, cloudPixels } from '../fog-textures';
+import { createFogShader } from '../fog-shader';
+import { brushPixels, fogSmokePixels } from '../fog-textures';
 import { textureFromPixels } from '../pixel-texture';
 import type { RenderStyle } from '../render-style';
 
@@ -29,18 +32,18 @@ import type { RenderStyle } from '../render-style';
  */
 const MAX_TEXTURE_PX = 2048;
 const BRUSH_TEXTURE_PX = 128;
-const CLOUD_TEXTURE_PX = 256;
-/** Un motif de nuages couvre ce nombre de cases : même grain sur la TV et dans l'aperçu. */
-const CLOUD_TILE_CELLS = 16;
+/** Texture de fumée (puissance de 2 : répétable en WebGL 1). */
+const SMOKE_TEXTURE_PX = 512;
 /** Précision du rapport cœur / fondu des empreintes : une texture par 1/32. */
 const CORE_STEPS = 32;
 
-const cloudGray = Math.round(CLOUD_LIGHT * 255);
-
-/** Couleur peinte pour chaque style ; le gris du brouillard de guerre est ensuite nuancé de nuages. */
+/**
+ * Couleur peinte pour chaque style. Ce n'est qu'un marqueur : le shader
+ * remplace le blanc par la fumée du brouillard de guerre, le noir reste noir.
+ */
 const STYLE_COLORS: Record<FogStyle, number> = {
   darkness: 0x000000,
-  fog: (cloudGray << 16) | (cloudGray << 8) | cloudGray,
+  fog: 0xffffff,
 };
 
 /**
@@ -52,14 +55,17 @@ const STYLE_COLORS: Record<FogStyle, number> = {
  * - `paint` : les opérations précédentes, déjà fixées. Quand un nouveau tracé
  *   commence, le précédent y est fixé, teinté de son style (ou en effacement).
  *   Un style peint par-dessus un autre le remplace en fondu.
- * - `display` = `paint` + `stroke` + nuages du brouillard de guerre,
- *   recomposé à chaque changement (et non à chaque image).
+ * - `display` = `paint` + `stroke`, recomposé à chaque changement (et non
+ *   à chaque image).
+ * - Affichage : un maillage qui couvre la grille, rendu par le shader du
+ *   brouillard (fog-shader.ts) : texture de fumée aux bords légèrement
+ *   ondulés pour le brouillard de guerre, noir pour l'obscurité.
  *
  * Quand le MJ peint, seules les nouvelles empreintes sont dessinées ; une
  * annulation redessine tout.
  */
 export class FogLayer {
-  readonly view = new Sprite();
+  readonly view = new Container();
 
   private paint: RenderTexture | null = null;
   private stroke: RenderTexture | null = null;
@@ -77,8 +83,10 @@ export class FogLayer {
   private readonly commitSprite = new Sprite();
   private readonly empty = new Container();
 
-  /** Nuages du brouillard de guerre ; `null` sans modes de fusion `min`/`max`. */
-  private readonly noise: TilingSprite | null;
+  /** Maillage de la grille (positions en cases), rendu par le shader du brouillard. */
+  private readonly mesh: Mesh<MeshGeometry, Shader>;
+  private readonly shader: Shader;
+  private readonly smoke: Texture;
   /** Empreintes combinées par maximum (sinon cumulées : bords plus raides). */
   private readonly stampBlend: 'max' | 'normal';
   /** Textures d'empreinte, une par rapport cœur / fondu, créées au besoin. */
@@ -103,18 +111,19 @@ export class FogLayer {
     this.view.alpha = style.fogAlpha;
     this.commitLayer.addChild(this.commitSprite);
     this.composition.addChild(this.paintSprite, this.strokeSprite);
+    this.stampBlend = supportsMaxBlend(renderer) ? 'max' : 'normal';
 
-    if (supportsMinMaxBlend(renderer)) {
-      this.stampBlend = 'max';
-      const clouds = textureFromPixels(cloudPixels(CLOUD_TEXTURE_PX), CLOUD_TEXTURE_PX);
-      this.noise = new TilingSprite({ texture: clouds });
-      // min(nuages, peinture) : les nuages ne nuancent que le gris, l'alpha est conservé.
-      this.noise.blendMode = 'min';
-      this.composition.addChild(this.noise);
-    } else {
-      this.stampBlend = 'normal';
-      this.noise = null;
-    }
+    this.smoke = textureFromPixels(fogSmokePixels(SMOKE_TEXTURE_PX), SMOKE_TEXTURE_PX);
+    this.smoke.source.addressMode = 'repeat';
+    this.shader = createFogShader(Texture.EMPTY.source, this.smoke.source);
+    // Positions et UV fixés avec les textures (`ensureTextures`).
+    const geometry = new MeshGeometry({
+      positions: new Float32Array(8),
+      uvs: new Float32Array(8),
+      indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+    });
+    this.mesh = new Mesh({ geometry, shader: this.shader });
+    this.view.addChild(this.mesh);
   }
 
   update(fog: FogState, grid: GridConfig, cellPx: number): void {
@@ -141,8 +150,11 @@ export class FogLayer {
   }
 
   destroy(): void {
-    this.view.destroy();
-    this.noise?.destroy({ texture: true, textureSource: true });
+    const geometry = this.mesh.geometry;
+    this.view.destroy({ children: true });
+    geometry.destroy();
+    this.shader.destroy();
+    this.smoke.destroy(true);
     this.composition.destroy({ children: true });
     this.commitLayer.destroy({ children: true });
     this.empty.destroy();
@@ -180,15 +192,16 @@ export class FogLayer {
     this.paintSprite.texture = this.paint;
     this.strokeSprite.texture = this.stroke;
     this.commitSprite.texture = this.stroke;
-    this.view.texture = this.display;
+    this.shader.resources['uDisplay'] = this.display.source;
     previous.forEach((texture) => texture?.destroy(true));
 
-    // Les textures sont en pixels, le calque en cases.
-    this.view.scale.set(1 / textureCellPx);
-    if (this.noise) {
-      this.noise.setSize(options.width, options.height);
-      this.noise.tileScale.set((CLOUD_TILE_CELLS * textureCellPx) / CLOUD_TEXTURE_PX);
-    }
+    // Le maillage couvre la grille, en cases ; ses UV s'arrêtent là où
+    // finit la grille dans `display` (arrondie au pixel supérieur).
+    const { cols, rows } = grid;
+    const u = (cols * textureCellPx) / options.width;
+    const v = (rows * textureCellPx) / options.height;
+    this.mesh.geometry.positions = new Float32Array([0, 0, cols, 0, cols, rows, 0, rows]);
+    this.mesh.geometry.uvs = new Float32Array([0, 0, u, 0, u, v, 0, v]);
     this.strokeOp = null;
     this.stale = true;
   }
@@ -271,7 +284,7 @@ export class FogLayer {
     return brush;
   }
 
-  /** `display` = opérations fixées + tracé en cours + nuages (mode `min`), en une passe. */
+  /** `display` = opérations fixées + tracé en cours, en une passe. */
   private compose(): void {
     if (!this.display) return;
     this.strokeSprite.visible = this.strokeOp !== null;
@@ -284,7 +297,7 @@ export class FogLayer {
   }
 }
 
-/** Couverture d'un tracé (blanc) → noir ou gris selon son style, ou effacement. */
+/** Couverture d'un tracé (blanc) → couleur de son style, ou effacement. */
 function styleStroke(sprite: Sprite, op: FogBrushOp): void {
   if (op.mode === 'reveal') {
     sprite.blendMode = 'erase';
@@ -295,8 +308,8 @@ function styleStroke(sprite: Sprite, op: FogBrushOp): void {
   }
 }
 
-/** Les modes `min` et `max` sont natifs en WebGL 2, et une extension très répandue en WebGL 1. */
-function supportsMinMaxBlend(renderer: Renderer): boolean {
+/** Le mode `max` est natif en WebGL 2, et une extension très répandue en WebGL 1. */
+function supportsMaxBlend(renderer: Renderer): boolean {
   if (renderer.type !== RendererType.WEBGL) return false;
   const webgl = renderer as WebGLRenderer;
   return webgl.context.webGLVersion === 2 || webgl.gl.getExtension('EXT_blend_minmax') !== null;

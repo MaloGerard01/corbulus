@@ -6,7 +6,7 @@ import {
   type FogStyle,
 } from '../../../core/models/game-state.model';
 import type { BoardEvent } from '../../../core/models/sync-message.model';
-import { CLOUD_DARK, CLOUD_LIGHT } from '../../../renderer/fog-textures';
+import { FOG_DARK, FOG_LIGHT } from '../../../renderer/fog-textures';
 import { GameStore } from '../state/game.store';
 import { VideoControls } from './video-controls';
 
@@ -47,15 +47,13 @@ const SHAKE_CELLS_PER_FORCE = 0.0625;
 /** Rayon d'une explosion, en cases. */
 export const EXPLOSION_RADIUS = { min: 1, max: 10, step: 0.5, default: 3 };
 
-const gray = (level: number) => {
-  const value = Math.round(level * 255);
-  return `rgb(${value} ${value} ${value})`;
-};
+const rgb = ([r, g, b]: readonly number[]) =>
+  `rgb(${Math.round(r * 255)} ${Math.round(g * 255)} ${Math.round(b * 255)})`;
 
 /** Pastille de chaque style, aux couleurs du rendu sur la TV. */
 const STYLE_SWATCHES: Record<FogStyle, string> = {
   darkness: '#000',
-  fog: `radial-gradient(circle at 35% 35%, ${gray(CLOUD_LIGHT)}, ${gray(CLOUD_DARK)})`,
+  fog: `radial-gradient(circle at 35% 35%, ${rgb(FOG_LIGHT)}, ${rgb(FOG_DARK)})`,
 };
 
 function cells(value: number): string {

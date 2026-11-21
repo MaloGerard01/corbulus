@@ -3,6 +3,7 @@ import type { Routes } from '@angular/router';
 
 import { DmSyncEffects } from './state/dm-sync.effects';
 import { GameStore } from './state/game.store';
+import { HudPlacement } from './state/hud-placement';
 
 export const DM_ROUTES: Routes = [
   {
@@ -13,6 +14,7 @@ export const DM_ROUTES: Routes = [
     providers: [
       GameStore,
       DmSyncEffects,
+      HudPlacement,
       provideEnvironmentInitializer(() => inject(DmSyncEffects)),
     ],
     loadComponent: () => import('./dm-shell').then((m) => m.DmShell),

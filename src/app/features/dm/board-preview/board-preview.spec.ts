@@ -7,6 +7,7 @@ import { AssetRepository } from '../../../core/persistence/asset.repository';
 import { BOARD_RENDERER_FACTORY, type BoardRendererLike } from '../../../shared/board-canvas';
 import { DmSyncEffects } from '../state/dm-sync.effects';
 import { GameStore } from '../state/game.store';
+import { HudPlacement } from '../state/hud-placement';
 import { BoardPreview } from './board-preview';
 
 /** Renderer factice : jsdom n'a pas de WebGL. */
@@ -59,6 +60,7 @@ describe('BoardPreview', () => {
     TestBed.configureTestingModule({
       providers: [
         GameStore,
+        HudPlacement,
         { provide: DmSyncEffects, useValue: { boardViewport, sendEvent } },
         { provide: BOARD_RENDERER_FACTORY, useValue: () => renderer },
         { provide: AssetRepository, useValue: { loadBitmap: async () => null } },
@@ -610,6 +612,64 @@ describe('BoardPreview', () => {
 
       expect(store.camera()).toEqual({ x: 10, y: 10, zoom: 1 });
       expect(store.fog().ops).toEqual([]);
+    });
+  });
+
+  describe('placement des infos d’un joueur', () => {
+    let placement: HudPlacement;
+    let playerId: string;
+
+    beforeEach(() => {
+      placement = TestBed.inject(HudPlacement);
+      store.addPlayer();
+      playerId = store.players()[0].id;
+      boardViewport.set(TV);
+    });
+
+    it('colle les infos au bord le plus proche du pointeur, et les enregistre au clic', async () => {
+      const fixture = await render();
+      placement.start(playerId);
+      await fixture.whenStable();
+      const overlay = query(fixture, '[data-hud-placement]');
+      expect(overlay).not.toBeNull();
+
+      // Écran de la TV dans l'aperçu : 800 × 450 px à partir de y = 175 (moitié de la TV).
+      // HUD sans portrait : 336 × 96 px sur la TV, soit 168 × 48 px, centré sur le pointeur.
+      pointer(overlay, 'pointermove', 400, 600);
+      await fixture.whenStable();
+      const ghost = query<HTMLElement>(fixture, '[data-hud-ghost]');
+      expect(ghost.style).toMatchObject({ left: '316px', top: '571px', width: '168px', height: '48px' });
+
+      pointer(overlay, 'pointerdown', 400, 600);
+      await fixture.whenStable();
+
+      expect(store.players()[0]).toMatchObject({ seat: 'bottom', seatPosition: 0.5 });
+      expect(placement.playerId()).toBeNull();
+      expect(query(fixture, '[data-hud-placement]')).toBeNull();
+    });
+
+    it('bloque les outils de l’aperçu pendant le placement', async () => {
+      const fixture = await render();
+      await toggleSection(fixture, 'Brouillard');
+      placement.start(playerId);
+      await fixture.whenStable();
+
+      pointer(query(fixture, '[data-hud-placement]'), 'pointerdown', 100, 100);
+
+      expect(store.fog().ops).toEqual([]);
+    });
+
+    it('annule avec Échap, sans rien changer', async () => {
+      const fixture = await render();
+      const before = store.players()[0];
+      placement.start(playerId);
+      await fixture.whenStable();
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      await fixture.whenStable();
+
+      expect(placement.playerId()).toBeNull();
+      expect(store.players()[0]).toEqual(before);
     });
   });
 

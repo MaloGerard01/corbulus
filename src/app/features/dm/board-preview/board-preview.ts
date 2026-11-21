@@ -15,7 +15,7 @@ import {
   type Camera,
   type FogStyle,
 } from '../../../core/models/game-state.model';
-import type { BoardEvent } from '../../../core/models/sync-message.model';
+import type { BoardEvent, BoardViewport } from '../../../core/models/sync-message.model';
 import { FOCUS_MOVE_MS } from '../../../renderer/camera-focus';
 import { computeLayout, visibleCells, type CellPoint } from '../../../renderer/layout';
 import { RENDER_STYLES } from '../../../renderer/render-style';
@@ -23,7 +23,9 @@ import { AnimatedMap } from '../../../shared/animated-map';
 import { BoardCanvas } from '../../../shared/board-canvas';
 import { DmSyncEffects } from '../state/dm-sync.effects';
 import { GameStore } from '../state/game.store';
+import { HudPlacement } from '../state/hud-placement';
 import { resizeFrame, type FrameCorner } from './frame-resize';
+import { hudRect, hudSize, snapToEdge, type ScreenRect } from './hud-geometry';
 import {
   BRUSH_SIZE,
   EXPLOSION_RADIUS,
@@ -59,6 +61,9 @@ const STROKE_POINT_STEP = 0.1;
 /** Couleur du ping sur la TV. */
 const PING_COLOR = '#3b82f6';
 
+/** Proportions supposées de la TV tant que le plateau n'a pas donné sa taille. */
+const DEFAULT_TV: BoardViewport = { width: 1920, height: 1080 };
+
 /** Rectangle dans l'aperçu, en pixels. */
 interface PxRect {
   left: number;
@@ -79,6 +84,10 @@ interface PxRect {
  *
  * Les effets partent vers la TV et sont rejoués ici ; le focus, qui déplace
  * la caméra de la TV, est montré par la zone qu'il affiche.
+ *
+ * Pendant le placement du HUD d'un joueur (`HudPlacement`), un calque
+ * recouvre l'aperçu : le HUD suit la souris contre le bord le plus proche de
+ * l'écran de la TV, un clic l'y enregistre, Échap annule.
  */
 @Component({
   selector: 'app-board-preview',
@@ -208,6 +217,43 @@ interface PxRect {
               [style.height.px]="cursor.core"
             ></div>
           }
+
+          <!-- Placement des infos d'un joueur : contre un bord de l'écran de la TV. -->
+          @if (placingPlayer(); as player) {
+            <div
+              data-hud-placement
+              class="absolute inset-0 z-10 cursor-crosshair"
+              (pointerdown)="placeHud($event)"
+            >
+              @if (screenRect(); as screen) {
+                <div
+                  class="pointer-events-none absolute border-2 border-dashed border-white/60"
+                  [style.left.px]="screen.left"
+                  [style.top.px]="screen.top"
+                  [style.width.px]="screen.width"
+                  [style.height.px]="screen.height"
+                ></div>
+              }
+              @if (hudGhost(); as ghost) {
+                <div
+                  data-hud-ghost
+                  class="pointer-events-none absolute grid place-items-center overflow-hidden rounded-md border-2 border-(--player-color) bg-black/75 text-xs font-semibold text-white"
+                  [style.--player-color]="player.color"
+                  [style.left.px]="ghost.left"
+                  [style.top.px]="ghost.top"
+                  [style.width.px]="ghost.width"
+                  [style.height.px]="ghost.height"
+                >
+                  {{ player.name }}
+                </div>
+              }
+              <p
+                class="pointer-events-none absolute inset-x-0 top-2 mx-auto w-fit max-w-[90%] rounded bg-black/80 px-3 py-1 text-center text-sm text-white"
+              >
+                Cliquez près d'un bord pour placer les infos de {{ player.name }} · Échap pour annuler
+              </p>
+            </div>
+          }
         </div>
 
         <app-preview-toolbar
@@ -230,6 +276,7 @@ interface PxRect {
 })
 export class BoardPreview {
   protected readonly store = inject(GameStore);
+  private readonly placement = inject(HudPlacement);
   private readonly dmSync = inject(DmSyncEffects);
   private readonly boardViewport = this.dmSync.boardViewport;
   private readonly surface = viewChild.required<ElementRef<HTMLElement>>('surface');
@@ -254,8 +301,16 @@ export class BoardPreview {
   /** Carte en édition animée (GIF, vidéo) : plein écran, sans cadrage ni brouillard. */
   private readonly isAnimated = computed(() => this.store.selectedView().animated !== null);
 
+  /** Joueur dont on place les infos (`null` : pas de placement en cours). */
+  protected readonly placingPlayer = computed(() => {
+    const id = this.placement.playerId();
+    return this.store.players().find((p) => p.id === id) ?? null;
+  });
+
   /** Outil actif sur l'aperçu, décidé par la section ouverte de la barre d'outils. */
   protected readonly tool = computed<'pan' | BrushMode | EffectTool | null>(() => {
+    // Le placement des infos d'un joueur passe avant tout outil.
+    if (this.placingPlayer()) return null;
     // Carte animée : ni cadrage ni brouillard, l'aperçu reste en lecture seule.
     if (this.isAnimated()) return null;
     switch (this.section()) {
@@ -316,6 +371,47 @@ export class BoardPreview {
       this.store.camera(),
       RENDER_STYLES.board.fit,
     );
+  });
+
+  /**
+   * Écran de la TV dans l'aperçu : le cadre de la zone visible (la carte
+   * couvre tout l'écran), sinon un écran aux proportions de la TV, centré.
+   */
+  protected readonly screenRect = computed<ScreenRect | null>(() => {
+    const size = this.previewSize();
+    const layout = this.previewLayout();
+    if (!size || !layout) return null;
+
+    const tv = this.boardViewport() ?? DEFAULT_TV;
+    const frame = this.frame();
+    if (frame) {
+      const width = frame.w * layout.cellPx;
+      return {
+        left: layout.originX + frame.x * layout.cellPx,
+        top: layout.originY + frame.y * layout.cellPx,
+        width,
+        height: frame.h * layout.cellPx,
+        scale: width / tv.width,
+      };
+    }
+    const scale = Math.min(size.width / tv.width, size.height / tv.height);
+    return {
+      left: (size.width - tv.width * scale) / 2,
+      top: (size.height - tv.height * scale) / 2,
+      width: tv.width * scale,
+      height: tv.height * scale,
+      scale,
+    };
+  });
+
+  /** HUD du joueur en cours de placement, contre le bord le plus proche du pointeur. */
+  protected readonly hudGhost = computed(() => {
+    const player = this.placingPlayer();
+    const hover = this.hover();
+    const screen = this.screenRect();
+    if (!player || !hover || !screen) return null;
+    const size = hudSize(player, this.store.hudTheme());
+    return hudRect(snapToEdge(hover, screen, size.length), screen, size);
   });
 
   /** La carte en édition est-elle celle que voient les joueurs ? */
@@ -413,8 +509,16 @@ export class BoardPreview {
     if (event.kind === 'focus') this.showFocus(event.camera, event.durationMs);
   }
 
-  /** Ctrl+Z annule le dernier tracé, sauf dans un champ de saisie (notes…). */
+  /**
+   * Échap annule le placement des infos d'un joueur ; Ctrl+Z annule le
+   * dernier tracé, sauf dans un champ de saisie (notes…).
+   */
   protected onKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.placingPlayer()) {
+      event.preventDefault();
+      this.placement.cancel();
+      return;
+    }
     const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z';
     if (!isUndo || isTextField(event.target)) return;
     event.preventDefault();
@@ -439,6 +543,24 @@ export class BoardPreview {
       default:
       // Aucune section ouverte : lecture seule.
     }
+  }
+
+  /** Enregistre les infos du joueur contre le bord le plus proche du clic. */
+  protected placeHud(event: PointerEvent): void {
+    // Sinon l'aperçu lancerait aussi l'outil actif.
+    event.stopPropagation();
+    const player = this.placingPlayer();
+    const screen = this.screenRect();
+    if (event.button !== 0 || !player || !screen) return;
+
+    const rect = this.surface().nativeElement.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const spot = snapToEdge(point, screen, hudSize(player, this.store.hudTheme()).length);
+    this.store.updatePlayer(player.id, {
+      seat: spot.seat,
+      seatPosition: Math.round(spot.position * 1000) / 1000,
+    });
+    this.placement.cancel();
   }
 
   protected startResize(corner: FrameCorner, event: PointerEvent): void {

@@ -8,7 +8,9 @@ import {
   type FogOp,
   type GameState,
   type GridConfig,
+  HUD_THEMES,
   type MapKind,
+  type Player,
   type SessionMap,
 } from '../models/game-state.model';
 import { createPlayback, type VideoPlayback } from '../models/video-playback';
@@ -28,6 +30,10 @@ type SavedMap = Omit<SessionMap, 'grid' | 'camera' | 'fog' | 'kind' | 'playback'
   playback?: VideoPlayback | null;
 };
 
+/** Joueur tel que sauvegardé, éventuellement avant la position personnalisée et le portrait. */
+type SavedPlayer = Omit<Player, 'seatPosition' | 'portraitAssetId'> &
+  Partial<Pick<Player, 'seatPosition' | 'portraitAssetId'>>;
+
 /** Sauvegarde antérieure aux cartes multiples : une seule carte, au niveau de l'état. */
 interface LegacySingleMap {
   mapAssetId?: string | null;
@@ -36,7 +42,10 @@ interface LegacySingleMap {
   fog?: SavedFog;
 }
 
-export type SavedState = Partial<Omit<GameState, 'maps'>> & { maps?: SavedMap[] } & LegacySingleMap;
+export type SavedState = Partial<Omit<GameState, 'maps' | 'players'>> & {
+  maps?: SavedMap[];
+  players?: SavedPlayer[];
+} & LegacySingleMap;
 
 /**
  * Remet en forme une sauvegarde, quelle que soit sa version : les champs
@@ -56,9 +65,15 @@ export function restoreGameState(saved: SavedState, legacyMapName: string | null
     // Avant la sélection séparée, on éditait la carte affichée.
     selectedMapId: saved.selectedMapId !== undefined ? saved.selectedMapId : activeMapId,
     preciseView: saved.preciseView ?? initial.preciseView,
-    players: saved.players ?? initial.players,
+    players: (saved.players ?? initial.players).map(normalizePlayer),
+    hudTheme: saved.hudTheme && HUD_THEMES.includes(saved.hudTheme) ? saved.hudTheme : initial.hudTheme,
     dmNotes: saved.dmNotes ?? initial.dmNotes,
   };
+}
+
+/** Champs ajoutés depuis : HUD centré avec les autres, sans portrait. */
+function normalizePlayer(player: SavedPlayer): Player {
+  return { ...player, seatPosition: player.seatPosition ?? null, portraitAssetId: player.portraitAssetId ?? null };
 }
 
 function legacyMaps(saved: LegacySingleMap, name: string | null): SavedMap[] {

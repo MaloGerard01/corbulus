@@ -30,6 +30,7 @@ function boardView(mapAssetId: string | null): BoardView {
     fog: { enabled: false, ops: [] },
     animated: null,
     players: [],
+    hudTheme: 'classic',
   };
 }
 

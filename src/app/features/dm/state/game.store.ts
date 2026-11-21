@@ -13,6 +13,7 @@ import {
   type FogStyle,
   type GameState,
   type GridConfig,
+  type HudTheme,
   type MapKind,
   type Player,
   type SessionMap,
@@ -70,12 +71,13 @@ export class GameStore {
   readonly fog = computed(() => this.selectedMap()?.fog ?? BLANK_MAP.fog);
   readonly preciseView = computed(() => this._state().preciseView);
   readonly dmNotes = computed(() => this._state().dmNotes);
+  readonly hudTheme = computed(() => this._state().hudTheme);
   /** Ce que reçoit le plateau : la carte affichée. */
   readonly boardView = computed(() => toBoardView(this._state()), {
     equal: sameBoardView,
   });
   /** Ce que montre l'aperçu MJ : la carte en édition, même si elle n'est pas affichée. */
-  readonly selectedView = computed(() => mapView(this.selectedMap(), this.players()), {
+  readonly selectedView = computed(() => mapView(this.selectedMap(), this.players(), this.hudTheme()), {
     equal: sameBoardView,
   });
 
@@ -89,6 +91,8 @@ export class GameStore {
         name: `Joueur ${index + 1}`,
         color: PLAYER_COLORS[index % PLAYER_COLORS.length],
         seat: SEATS[index % SEATS.length],
+        seatPosition: null,
+        portraitAssetId: null,
         hp: 10,
         hpMax: 10,
         gold: 0,
@@ -111,6 +115,11 @@ export class GameStore {
 
   removePlayer(id: string): void {
     this.mutate((s) => ({ ...s, players: s.players.filter((p) => p.id !== id) }));
+  }
+
+  /** Style des cartes de tous les joueurs sur la TV. */
+  setHudTheme(hudTheme: HudTheme): void {
+    this.mutate((s) => ({ ...s, hudTheme }));
   }
 
   // --- Cartes de la session ------------------------------------------------
@@ -298,6 +307,8 @@ function normalizePlayer(p: Player): Player {
     hpMax,
     hp: clamp(Math.round(p.hp) || 0, 0, hpMax),
     gold: Math.max(0, Math.round(p.gold) || 0),
+    seatPosition:
+      p.seatPosition === null || !Number.isFinite(p.seatPosition) ? null : clamp(p.seatPosition, 0, 1),
   };
 }
 

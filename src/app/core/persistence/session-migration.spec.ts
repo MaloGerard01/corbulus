@@ -76,6 +76,18 @@ describe('restoreGameState', () => {
     expect(state.maps[0].playback).toEqual({ ...playback, volume: 1 });
   });
 
+  it("centre les infos et retire le portrait des joueurs d'avant ces réglages", () => {
+    const aria = { id: 'p1', name: 'Aria', color: '#f00', seat: 'left', hp: 7, hpMax: 10, gold: 3 } as const;
+    const state = restoreGameState({ players: [aria] }, null);
+    expect(state.players).toEqual([{ ...aria, seatPosition: null, portraitAssetId: null }]);
+  });
+
+  it('garde le style des cartes, ou prend le style sobre', () => {
+    expect(restoreGameState({ hudTheme: 'fantasy' }, null).hudTheme).toBe('fantasy');
+    expect(restoreGameState({}, null).hudTheme).toBe('classic');
+    expect(restoreGameState({ hudTheme: 'steampunk' as never }, null).hudTheme).toBe('classic');
+  });
+
   it("donne une session sans carte à une ancienne sauvegarde qui n'en avait pas", () => {
     const state = restoreGameState({ mapAssetId: null, players: [] }, null);
     expect(state.maps).toEqual([]);

@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import {
   createInitialGameState,
   mapNameFromFile,
+  sessionAssetIds,
   type GameState,
 } from '../models/game-state.model';
 import { db, type SessionRecord } from './db';
@@ -79,9 +80,7 @@ export class SessionRepository {
   /** Images utilisées par au moins une session (pour nettoyer les autres). */
   async usedAssetIds(): Promise<string[]> {
     const records = await db.sessions.toArray();
-    return records.flatMap((record) =>
-      restoreGameState(record.state as SavedState, null).maps.map((m) => m.assetId),
-    );
+    return records.flatMap((record) => sessionAssetIds(restoreGameState(record.state as SavedState, null)));
   }
 
   private async assetName(assetId: string): Promise<string | null> {

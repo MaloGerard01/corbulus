@@ -1,4 +1,4 @@
-import { CLOUD_DARK, CLOUD_LIGHT, brushAlpha, cloudNoise, cloudPixels } from './fog-textures';
+import { brushAlpha, fbm, fogSmokePixels, fractal } from './fog-textures';
 
 describe('brushAlpha', () => {
   it('est plein dans le cœur et nul au bord du fondu', () => {
@@ -25,47 +25,52 @@ describe('brushAlpha', () => {
   });
 });
 
-describe('cloudNoise', () => {
-  const size = 64;
-  const noise = cloudNoise(size);
-  const at = (x: number, y: number) => noise[y * size + x];
+describe('fractal', () => {
+  it('donne le même bruit que fbm, préparé pour de nombreux appels', () => {
+    const noise = fractal(23, 5, 6);
+    for (const [u, v] of [[0, 0], [0.13, 0.71], [0.5, 0.25], [-0.2, 1.3]]) {
+      expect(noise(u, v)).toBeCloseTo(fbm(u, v, 23, 5, 6), 6);
+    }
+  });
+});
 
-  it('donne le même motif à chaque appel (TV et aperçu identiques)', () => {
-    expect(cloudNoise(size)).toEqual(noise);
+describe('fogSmokePixels', () => {
+  const size = 64;
+  const pixels = fogSmokePixels(size);
+  const channel = (offset: number) => [...pixels.filter((_, i) => i % 4 === offset)];
+  const shadeAt = (x: number, y: number) => pixels[(y * size + x) * 4];
+
+  it('nuance la teinte en continu, sans écraser les extrêmes', () => {
+    const shades = channel(0);
+    // Un dégradé de fumée, pas des taches sur un fond uni.
+    expect(new Set(shades).size).toBeGreaterThan(60);
+    // Peu contrastée : l'essentiel reste loin du noir et du blanc de la texture.
+    const clipped = shades.filter((s) => s === 0 || s === 255).length;
+    expect(clipped / shades.length).toBeLessThan(0.02);
   });
 
-  it('se raccorde sans couture quand on le répète, dans les deux sens', () => {
-    // Après la dernière colonne (ligne) vient la première : leur écart ne doit
-    // pas dépasser celui de deux colonnes (lignes) voisines.
+  it('se raccorde sans couture quand on la répète, dans les deux sens', () => {
     let seam = 0;
     let neighbours = 0;
     for (let i = 0; i < size; i++) {
-      seam = Math.max(seam, Math.abs(at(size - 1, i) - at(0, i)), Math.abs(at(i, size - 1) - at(i, 0)));
+      seam = Math.max(seam, Math.abs(shadeAt(size - 1, i) - shadeAt(0, i)), Math.abs(shadeAt(i, size - 1) - shadeAt(i, 0)));
       for (let j = 1; j < size; j++) {
-        neighbours = Math.max(neighbours, Math.abs(at(j, i) - at(j - 1, i)), Math.abs(at(i, j) - at(i, j - 1)));
+        neighbours = Math.max(
+          neighbours,
+          Math.abs(shadeAt(j, i) - shadeAt(j - 1, i)),
+          Math.abs(shadeAt(i, j) - shadeAt(i, j - 1)),
+        );
       }
     }
     expect(seam).toBeLessThanOrEqual(neighbours * 1.5);
   });
 
-  it('reste entre 0 et 1', () => {
-    expect(Math.min(...noise)).toBeGreaterThanOrEqual(0);
-    expect(Math.max(...noise)).toBeLessThanOrEqual(1);
-  });
-});
-
-describe('cloudPixels', () => {
-  const pixels = cloudPixels(64);
-  const grays = pixels.filter((_, i) => i % 4 === 0);
-
-  it('nuance le gris en continu, entre nuages légers et denses', () => {
-    expect(Math.max(...grays)).toBeLessThanOrEqual(Math.round(CLOUD_LIGHT * 255));
-    expect(Math.min(...grays)).toBeGreaterThanOrEqual(Math.round(CLOUD_DARK * 255));
-    // Un dégradé, pas des taches sur un fond uni : beaucoup de niveaux différents.
-    expect(new Set(grays).size).toBeGreaterThan(30);
+  it('range la densité des nappes en vert, et reste opaque', () => {
+    expect(new Set(channel(1)).size).toBeGreaterThan(30);
+    expect(new Set(channel(3))).toEqual(new Set([255]));
   });
 
-  it('est opaque partout', () => {
-    expect(new Set(pixels.filter((_, i) => i % 4 === 3))).toEqual(new Set([255]));
+  it('n’est calculée qu’une fois par taille', () => {
+    expect(fogSmokePixels(size)).toBe(pixels);
   });
 });

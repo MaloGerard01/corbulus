@@ -2,7 +2,7 @@ import { DestroyRef, Injectable, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { debounceTime, filter, map } from 'rxjs';
 
-import type { GameState } from '../../../core/models/game-state.model';
+import { sessionAssetIds, type GameState } from '../../../core/models/game-state.model';
 import type { BoardEvent, BoardViewport } from '../../../core/models/sync-message.model';
 import { AssetRepository } from '../../../core/persistence/asset.repository';
 import { SessionRepository, type LoadedSession } from '../../../core/persistence/session.repository';
@@ -133,7 +133,7 @@ export class DmSyncEffects {
   private async pruneAssets(): Promise<void> {
     try {
       // La session ouverte compte aussi, même si sa dernière version n'est pas encore en base.
-      const used = [...(await this.sessions.usedAssetIds()), ...this.store.maps().map((m) => m.assetId)];
+      const used = [...(await this.sessions.usedAssetIds()), ...sessionAssetIds(this.store.state())];
       await this.assets.deleteUnused(used);
     } catch (err) {
       console.error('Échec du nettoyage des fichiers importés', err);
