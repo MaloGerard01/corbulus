@@ -1,7 +1,9 @@
 import { Application, Container } from 'pixi.js';
 
 import type { BoardView } from '../core/models/board-view.model';
+import type { Camera } from '../core/models/game-state.model';
 import type { BoardEvent } from '../core/models/sync-message.model';
+import { focusCamera, type CameraFocus } from './camera-focus';
 import { EffectsLayer } from './layers/effects-layer';
 import { FogLayer } from './layers/fog-layer';
 import { FrameLayer } from './layers/frame-layer';
@@ -27,6 +29,9 @@ interface Layers {
  *
  * Cycle de vie : `init()` est asynchrone (Pixi 8) ; `render()` et
  * `playEffect()` sont sans effet tant qu'elle n'est pas terminée.
+ *
+ * Un focus (effet du MJ) déplace temporairement la caméra : elle est alors
+ * animée image par image, puis revient à celle de la vue.
  */
 export class BoardRenderer {
   private readonly app = new Application();
@@ -35,6 +40,10 @@ export class BoardRenderer {
   private resizeObserver: ResizeObserver | null = null;
   private view: BoardView | null = null;
   private frame: CellRect | null = null;
+  /** Focus en cours (TV seulement). */
+  private focus: CameraFocus | null = null;
+  /** Caméra affichée à la dernière image : point de départ d'un nouveau focus. */
+  private shownCamera: Camera | null = null;
   private destroyed = false;
   private readonly style: RenderStyle;
 
@@ -95,6 +104,7 @@ export class BoardRenderer {
     );
     this.app.stage.addChild(this.world);
     this.layers = layers;
+    this.app.ticker.add(this.tick);
 
     this.resizeObserver = new ResizeObserver(() => {
       this.resize(host.clientWidth, host.clientHeight);
@@ -105,6 +115,8 @@ export class BoardRenderer {
   }
 
   render(view: BoardView): void {
+    // Changer de carte interrompt le focus : sa cible n'a plus de sens.
+    if (this.view && view.mapAssetId !== this.view.mapAssetId) this.focus = null;
     this.view = view;
     this.draw();
   }
@@ -119,7 +131,12 @@ export class BoardRenderer {
   }
 
   playEffect(event: BoardEvent): void {
-    this.layers?.effects.play(event);
+    if (!this.layers) return;
+    if (event.kind === 'focus') {
+      this.startFocus(event.camera, event.durationMs);
+    } else {
+      this.layers.effects.play(event);
+    }
   }
 
   /** Zone visible sur la TV, encadrée dans l'aperçu du MJ (`null` : pas de cadre). */
@@ -138,6 +155,8 @@ export class BoardRenderer {
 
     const { map, grid, fog, effects, frame } = this.layers;
     this.layers = null;
+    this.focus = null;
+    this.app.ticker.remove(this.tick);
     frame.destroy();
     effects.destroy();
     fog.destroy();
@@ -152,19 +171,57 @@ export class BoardRenderer {
     this.draw();
   }
 
+  /**
+   * Seule la TV suit la caméra : l'aperçu du MJ (`contain`) montre toujours
+   * toute la carte.
+   */
+  private startFocus(to: Camera, holdMs: number): void {
+    if (this.style.fit !== 'cover' || !this.view) return;
+    const from = this.shownCamera ?? this.view.camera;
+    this.focus = { from, to, holdMs, start: performance.now() };
+    this.draw();
+  }
+
+  /** Pendant un focus, on redessine à chaque image. */
+  private readonly tick = (): void => {
+    if (this.focus) this.draw();
+  };
+
   /** Chaque calque compare ses entrées par valeur et ne redessine que si besoin. */
   private draw(): void {
     const view = this.view;
     if (!this.layers || !view) return;
 
     const { width, height } = this.app.screen;
-    const layout = computeLayout(width, height, view.grid, view.camera, this.style.fit);
+    const layoutFor = (camera: Camera) =>
+      computeLayout(width, height, view.grid, camera, this.style.fit);
+    const camera = this.focusedCamera(view.camera, (c) => layoutFor(c).camera);
+    const layout = layoutFor(camera);
+    this.shownCamera = layout.camera;
     this.world.position.set(layout.originX, layout.originY);
     this.world.scale.set(layout.cellPx);
 
+    // Pendant un focus, le brouillard est préparé d'emblée pour le zoom le
+    // plus fort : ses textures ne sont pas recréées en plein mouvement.
+    const fogCellPx = this.focus
+      ? Math.max(
+          layout.cellPx,
+          ...[this.focus.from, this.focus.to, view.camera].map((c) => layoutFor(c).cellPx),
+        )
+      : layout.cellPx;
+
     this.layers.map.update(view.grid);
     this.layers.grid.update(view.grid, layout.cellPx);
-    this.layers.fog.update(view.fog, view.grid, layout.cellPx);
+    this.layers.fog.update(view.fog, view.grid, fogCellPx);
     this.layers.frame.update(this.frame, view.grid, layout.cellPx);
+  }
+
+  /** Caméra du focus en cours, sinon celle de la vue. */
+  private focusedCamera(base: Camera, bound: (camera: Camera) => Camera): Camera {
+    if (!this.focus) return base;
+    const camera = focusCamera(this.focus, performance.now(), base, bound);
+    if (camera) return camera;
+    this.focus = null;
+    return base;
   }
 }

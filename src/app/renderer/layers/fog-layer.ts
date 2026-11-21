@@ -20,6 +20,7 @@ import type {
 } from '../../core/models/game-state.model';
 import { brushDiameter, brushStamps, planFogUpdate, type FogPlan } from '../fog-ops';
 import { CLOUD_LIGHT, brushPixels, cloudPixels } from '../fog-textures';
+import { textureFromPixels } from '../pixel-texture';
 import type { RenderStyle } from '../render-style';
 
 /**
@@ -299,13 +300,4 @@ function supportsMinMaxBlend(renderer: Renderer): boolean {
   if (renderer.type !== RendererType.WEBGL) return false;
   const webgl = renderer as WebGLRenderer;
   return webgl.context.webGLVersion === 2 || webgl.gl.getExtension('EXT_blend_minmax') !== null;
-}
-
-function textureFromPixels(pixels: Uint8ClampedArray<ArrayBuffer>, size: number): Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  canvas.getContext('2d')?.putImageData(new ImageData(pixels, size, size), 0, 0);
-  // skipCache : texture propre au calque, détruite avec lui.
-  return Texture.from(canvas, true);
 }

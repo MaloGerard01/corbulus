@@ -48,15 +48,18 @@ describe('BoardPreview', () => {
   let store: GameStore;
   let renderer: FakeRenderer;
   let boardViewport: WritableSignal<BoardViewport | null>;
+  /** Effets envoyés à la TV. */
+  let sendEvent: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.stubGlobal('ResizeObserver', FakeResizeObserver);
     renderer = new FakeRenderer();
     boardViewport = signal<BoardViewport | null>(null);
+    sendEvent = vi.fn();
     TestBed.configureTestingModule({
       providers: [
         GameStore,
-        { provide: DmSyncEffects, useValue: { boardViewport } },
+        { provide: DmSyncEffects, useValue: { boardViewport, sendEvent } },
         { provide: BOARD_RENDERER_FACTORY, useValue: () => renderer },
         { provide: AssetRepository, useValue: { loadBitmap: async () => null } },
       ],
@@ -86,7 +89,10 @@ describe('BoardPreview', () => {
   }
 
   /** Ouvre (ou referme) une section de la barre d'outils. */
-  async function toggleSection(fixture: Fixture, label: 'Affichage' | 'Brouillard'): Promise<void> {
+  async function toggleSection(
+    fixture: Fixture,
+    label: 'Affichage' | 'Brouillard' | 'Effets',
+  ): Promise<void> {
     const headers: HTMLButtonElement[] = [...fixture.nativeElement.querySelectorAll('button[aria-expanded]')];
     headers.find((h) => h.textContent?.includes(label))!.click();
     await fixture.whenStable();
@@ -416,6 +422,194 @@ describe('BoardPreview', () => {
 
       expect(query(fixture, '#preview-tools-display')).toBeNull();
       expect(query(fixture, '#preview-tools-fog')).not.toBeNull();
+    });
+  });
+
+  describe('section Effets', () => {
+    /** La carte en édition est celle que voient les joueurs. */
+    function showOnScreen(): void {
+      store.activateMap(store.selectedMap()!.id);
+    }
+
+    async function choose(fixture: Fixture, label: string): Promise<void> {
+      const radios: HTMLButtonElement[] = [...fixture.nativeElement.querySelectorAll('[role=radio]')];
+      radios.find((r) => r.textContent?.trim() === label)!.click();
+      await fixture.whenStable();
+    }
+
+    function slider(fixture: Fixture, label: string): HTMLInputElement {
+      return query<HTMLInputElement>(fixture, `input[aria-label="${label}"]`);
+    }
+
+    async function setSlider(fixture: Fixture, label: string, value: number): Promise<void> {
+      const input = slider(fixture, label);
+      input.value = String(value);
+      input.dispatchEvent(new Event('input'));
+      await fixture.whenStable();
+    }
+
+    it('ne joue rien sur une carte qui n’est pas à l’écran', async () => {
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      const radios: HTMLButtonElement[] = [
+        ...fixture.nativeElement.querySelectorAll('#preview-tools-effects [role=radio]'),
+      ];
+
+      expect(radios.map((r) => r.textContent?.trim())).toEqual(['Ping', 'Focus', 'Secousse', 'Explosion']);
+      expect(radios.map((r) => r.disabled)).toEqual([true, true, true, true]);
+      expect(query(fixture, '#preview-tools-effects').textContent).toContain('Affichez cette carte');
+
+      pointer(canvas(fixture), 'pointerdown', 100, 100);
+      expect(sendEvent).not.toHaveBeenCalled();
+    });
+
+    it('pinge la case cliquée, sur la TV et dans l’aperçu', async () => {
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+
+      pointer(canvas(fixture), 'pointerdown', 100, 140); // case (2,5 ; 3,5)
+
+      const ping = { kind: 'ping', x: 2.5, y: 3.5, color: expect.any(String) };
+      expect(sendEvent).toHaveBeenCalledWith(ping);
+      expect(renderer.playEffect).toHaveBeenCalledWith(ping);
+    });
+
+    it('focus : zoome sur la case cliquée pour montrer 60 % de la vue de la TV', async () => {
+      boardViewport.set(TV);
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      await choose(fixture, 'Focus');
+      await setSlider(fixture, 'Durée du focus', 8);
+
+      expect(query(fixture, '[data-effect-settings]').textContent).toContain('60 %');
+
+      pointer(canvas(fixture), 'pointerdown', 400, 400); // case (10 ; 10)
+      await fixture.whenStable();
+
+      expect(sendEvent).toHaveBeenCalledWith({
+        kind: 'focus',
+        camera: { x: 10, y: 10, zoom: 1 / 0.6 },
+        durationMs: 8000,
+      });
+      // La vue choisie par le MJ ne bouge pas : la TV y reviendra.
+      expect(store.camera()).toEqual({ x: 10, y: 10, zoom: 1 });
+
+      // La TV montrait 20 × 11,25 cases, elle en montre 60 % : 12 × 6,75 cases,
+      // soit 480 × 270 px à 40 px la case dans l'aperçu.
+      const zone = query<HTMLElement>(fixture, '[data-focus-active]');
+      expect(parseFloat(zone.style.left)).toBeCloseTo(160);
+      expect(parseFloat(zone.style.top)).toBeCloseTo(265);
+      expect(parseFloat(zone.style.width)).toBeCloseTo(480);
+      expect(parseFloat(zone.style.height)).toBeCloseTo(270);
+    });
+
+    it('focus en mode précis : garde le zoom de la TV et montre la zone visée sous le pointeur', async () => {
+      boardViewport.set(TV);
+      showOnScreen();
+      store.setPreciseView(true);
+      store.setCamera({ x: 10, y: 10, zoom: 2 });
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      await choose(fixture, 'Focus');
+
+      expect(query(fixture, '[data-effect-settings]').textContent).toContain('en gardant son zoom');
+
+      pointer(canvas(fixture), 'pointermove', 200, 400); // case (5 ; 10)
+      await fixture.whenStable();
+      // Zoom ×2 : 10 × 5,625 cases, la zone est ramenée dans la grille (de x = 0 à 10).
+      expect(query<HTMLElement>(fixture, '[data-focus-preview]').style).toMatchObject({
+        left: '0px',
+        width: '400px',
+        height: '225px',
+      });
+
+      pointer(canvas(fixture), 'pointerdown', 200, 400);
+      expect(sendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'focus', camera: { x: 5, y: 10, zoom: 2 } }),
+      );
+    });
+
+    it('secoue le plateau avec la durée et la force choisies', async () => {
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      await choose(fixture, 'Secousse');
+      await setSlider(fixture, 'Durée de la secousse', 2.5);
+      await setSlider(fixture, 'Force de la secousse', 8);
+      expect(query(fixture, '[data-effect-settings]').textContent).toContain('2,5 s');
+      expect(query(fixture, '[data-effect-settings]').textContent).toContain('8 / 10');
+
+      const buttons: HTMLButtonElement[] = [...fixture.nativeElement.querySelectorAll('button')];
+      buttons.find((b) => b.textContent?.trim() === 'Secouer le plateau')!.click();
+
+      // Force 8 : le plateau s'écarte d'au plus une demi-case.
+      const shake = { kind: 'shake', durationMs: 2500, amplitude: 0.5 };
+      expect(sendEvent).toHaveBeenCalledWith(shake);
+      expect(renderer.playEffect).toHaveBeenCalledWith(shake);
+    });
+
+    it('déclenche une explosion du rayon choisi, montré sous le pointeur', async () => {
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      await choose(fixture, 'Explosion');
+      await setSlider(fixture, "Rayon de l'explosion", 4.5);
+      expect(query(fixture, '[data-effect-settings]').textContent).toContain('4,5 cases');
+
+      pointer(canvas(fixture), 'pointermove', 100, 140);
+      await fixture.whenStable();
+      // 4,5 cases de rayon, à 40 px la case.
+      expect(query<HTMLElement>(fixture, '[data-explosion-cursor]').style).toMatchObject({
+        left: '100px',
+        top: '140px',
+        width: '360px',
+      });
+
+      pointer(canvas(fixture), 'pointerdown', 100, 140); // case (2,5 ; 3,5)
+
+      const explosion = { kind: 'explosion', x: 2.5, y: 3.5, radius: 4.5 };
+      expect(sendEvent).toHaveBeenCalledWith(explosion);
+      expect(renderer.playEffect).toHaveBeenCalledWith(explosion);
+    });
+
+    it('montre les réglages de l’effet choisi sous la grille', async () => {
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      const settings = () => query(fixture, '[data-effect-settings]');
+
+      expect(settings().querySelector('input')).toBeNull(); // Ping : rien à régler
+      await choose(fixture, 'Focus');
+      expect(slider(fixture, 'Durée du focus')).not.toBeNull();
+      await choose(fixture, 'Secousse');
+      expect(slider(fixture, 'Durée du focus')).toBeNull();
+      expect(slider(fixture, 'Durée de la secousse')).not.toBeNull();
+    });
+
+    it('secousse : un clic sur l’aperçu ne joue rien', async () => {
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+      await choose(fixture, 'Secousse');
+
+      pointer(canvas(fixture), 'pointerdown', 400, 400);
+
+      expect(sendEvent).not.toHaveBeenCalled();
+    });
+
+    it('ne déplace pas le cadre et ne peint pas pendant qu’on joue des effets', async () => {
+      boardViewport.set(TV);
+      showOnScreen();
+      const fixture = await render();
+      await toggleSection(fixture, 'Effets');
+
+      pointer(canvas(fixture), 'pointerdown', 400, 400);
+      pointer(canvas(fixture), 'pointermove', 400, 320);
+
+      expect(store.camera()).toEqual({ x: 10, y: 10, zoom: 1 });
+      expect(store.fog().ops).toEqual([]);
     });
   });
 

@@ -22,12 +22,6 @@ export interface Player {
   gold: number;
 }
 
-/** Toutes les coordonnées sont en unités de grille (cases), jamais en pixels écran. */
-export type Shape =
-  | { kind: 'circle'; cx: number; cy: number; r: number }
-  | { kind: 'rect'; x: number; y: number; w: number; h: number }
-  | { kind: 'polygon'; points: [number, number][] };
-
 /**
  * Aspect du brouillard peint : `darkness` cache tout en noir, `fog` (brouillard
  * de guerre) sous un gris nuageux.

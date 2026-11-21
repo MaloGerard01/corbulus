@@ -1,15 +1,35 @@
-import { Container, Graphics, type Ticker } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture, type Ticker } from 'pixi.js';
 
-import type { Shape } from '../../core/models/game-state.model';
 import type { BoardEvent } from '../../core/models/sync-message.model';
-import { traceShape } from '../shapes';
+import {
+  GLOWING_KINDS,
+  PUFF_VARIANTS,
+  SHOCKWAVE_COLOR,
+  explosionDuration,
+  explosionParticles,
+  particleFrame,
+  shockwaveFrame,
+  type ParticleFrame,
+} from '../explosion';
+import { glowPixels, puffPixels } from '../explosion-textures';
+import { textureFromPixels } from '../pixel-texture';
 
-const PING_MS = 1800;
-const SHAKE_MS = 600;
-const FOCUS_FADE_MS = 300;
-/** Amplitude du tremblement, en cases. */
-const SHAKE_AMPLITUDE = 0.25;
-const FOCUS_COLOR = '#facc15';
+/** Effets joués par ce calque ; le focus, lui, déplace la caméra (voir `BoardRenderer`). */
+export type LayerEffect = Exclude<BoardEvent, { kind: 'focus' }>;
+
+const PING_MS = 500;
+/** Rayon du ping à la fin de son expansion, en cases. */
+const PING_RADIUS = 1.5;
+/** La secousse s'atténue sur ses dernières millisecondes. */
+const SHAKE_FADE_MS = 300;
+/** Taille des textures de l'explosion, en pixels. */
+const GLOW_TEXTURE_PX = 64;
+const PUFF_TEXTURE_PX = 128;
+
+interface ExplosionTextures {
+  glow: Texture;
+  puffs: Texture[];
+}
 
 interface Animation {
   start: number;
@@ -28,6 +48,10 @@ export class EffectsLayer {
   readonly view = new Container();
 
   private animations: Animation[] = [];
+  /** Secousse en cours : une nouvelle la remplace. */
+  private shaking: Animation | null = null;
+  /** Calculées à la première explosion, puis réutilisées. */
+  private explosionTextures: ExplosionTextures | null = null;
 
   /**
    * @param shakeTarget conteneur du monde, décalé via son `pivot` (en cases)
@@ -40,24 +64,30 @@ export class EffectsLayer {
     this.ticker.add(this.tick);
   }
 
-  play(event: BoardEvent): void {
+  play(event: LayerEffect): void {
     switch (event.kind) {
       case 'ping':
         return this.ping(event.x, event.y, event.color);
-      case 'focus':
-        return this.focus(event.shape, event.durationMs);
       case 'shake':
-        return this.shake();
+        return this.shake(event.durationMs, event.amplitude);
+      case 'explosion':
+        return this.explosion(event.x, event.y, event.radius);
     }
   }
 
   destroy(): void {
     this.ticker.remove(this.tick);
     this.animations = [];
+    this.shaking = null;
     this.view.destroy({ children: true });
+    if (this.explosionTextures) {
+      const { glow, puffs } = this.explosionTextures;
+      [glow, ...puffs].forEach((texture) => texture.destroy(true));
+      this.explosionTextures = null;
+    }
   }
 
-  /** Trois ondes décalées qui s'élargissent autour d'un point. */
+  /** Rond qui s'agrandit en une demi-seconde, en s'effaçant sur la fin. */
   private ping(x: number, y: number, color: string): void {
     const g = new Graphics();
     this.view.addChild(g);
@@ -65,55 +95,102 @@ export class EffectsLayer {
     this.animate(
       PING_MS,
       (t) => {
-        g.clear();
-        for (let i = 0; i < 3; i++) {
-          const k = clamp01((t - i * 0.25) / 0.5);
-          if (k === 0 || k === 1) continue;
-          g.circle(x, y, 0.2 + easeOut(k) * 1.8).stroke({ width: 0.12, color, alpha: 1 - k });
-        }
-        g.circle(x, y, 0.3).fill({ color, alpha: 1 - t });
+        const radius = PING_RADIUS * (0.2 + 0.8 * easeOut(t));
+        const alpha = 1 - t * t;
+        g.clear()
+          .circle(x, y, radius)
+          .fill({ color, alpha: 0.45 * alpha })
+          .stroke({ width: 0.15, color, alpha });
       },
       () => g.destroy(),
     );
   }
 
-  /** Assombrit tout sauf la forme, entourée d'un contour qui pulse. */
-  private focus(shape: Shape, durationMs: number): void {
-    const dim = traceShape(new Graphics().rect(-1e4, -1e4, 2e4, 2e4).fill(0x000000), shape).cut();
-    const outline = traceShape(new Graphics(), shape).stroke({ width: 0.15, color: FOCUS_COLOR });
-    this.view.addChild(dim, outline);
+  /** Tremblement du monde pendant `durationMs`, d'au plus `amplitude` cases, atténué sur la fin. */
+  private shake(durationMs: number, amplitude: number): void {
+    if (this.shaking) this.cancel(this.shaking);
 
-    const total = Math.max(durationMs, 2 * FOCUS_FADE_MS);
+    const shaking = this.animate(
+      durationMs,
+      (t) => {
+        const remainingMs = (1 - t) * durationMs;
+        const offset = Math.max(0, amplitude) * Math.min(1, remainingMs / SHAKE_FADE_MS);
+        this.shakeTarget.pivot.set(randomSigned() * offset, randomSigned() * offset);
+      },
+      () => {
+        this.shakeTarget.pivot.set(0, 0);
+        if (this.shaking === shaking) this.shaking = null;
+      },
+    );
+    this.shaking = shaking;
+  }
+
+  /**
+   * Explosion vue du dessus (voir explosion.ts) : un sprite par particule,
+   * plus l'onde de choc, le tout détruit à la fin.
+   */
+  private explosion(x: number, y: number, radius: number): void {
+    const textures = this.getExplosionTextures();
+    const group = new Container();
+    group.position.set(x, y);
+    this.view.addChild(group);
+
+    // Particules déjà dans l'ordre d'empilement.
+    const particles = explosionParticles(radius);
+    const sprites = particles.map((particle) => {
+      const texture = particle.kind === 'smoke' ? textures.puffs[particle.variant] : textures.glow;
+      const sprite = new Sprite({ texture, anchor: 0.5, visible: false });
+      if (GLOWING_KINDS.has(particle.kind)) sprite.blendMode = 'add';
+      return group.addChild(sprite);
+    });
+    const shockwave = group.addChild(new Graphics());
+    shockwave.blendMode = 'add';
+
+    const total = explosionDuration(particles);
     this.animate(
       total,
       (t) => {
         const elapsed = t * total;
-        const fade = Math.min(1, elapsed / FOCUS_FADE_MS, (total - elapsed) / FOCUS_FADE_MS);
-        dim.alpha = 0.7 * fade;
-        outline.alpha = fade * (0.6 + 0.4 * Math.sin(elapsed / 150));
+        particles.forEach((particle, i) => showParticle(sprites[i], particleFrame(particle, elapsed)));
+
+        shockwave.clear();
+        const ring = shockwaveFrame(radius, elapsed);
+        if (ring) {
+          shockwave
+            .circle(0, 0, ring.radius)
+            .stroke({ width: ring.width, color: SHOCKWAVE_COLOR, alpha: ring.alpha });
+        }
       },
-      () => {
-        dim.destroy();
-        outline.destroy();
-      },
+      // Les textures sont partagées : seuls les sprites sont détruits.
+      () => group.destroy({ children: true }),
     );
   }
 
-  private shake(): void {
-    this.animate(
-      SHAKE_MS,
-      (t) => {
-        const amplitude = SHAKE_AMPLITUDE * (1 - t);
-        this.shakeTarget.pivot.set(randomSigned() * amplitude, randomSigned() * amplitude);
-      },
-      () => this.shakeTarget.pivot.set(0, 0),
-    );
+  private getExplosionTextures(): ExplosionTextures {
+    this.explosionTextures ??= {
+      glow: textureFromPixels(glowPixels(GLOW_TEXTURE_PX), GLOW_TEXTURE_PX),
+      puffs: Array.from({ length: PUFF_VARIANTS }, (_, i) =>
+        textureFromPixels(puffPixels(PUFF_TEXTURE_PX, 7 + 13 * i), PUFF_TEXTURE_PX),
+      ),
+    };
+    return this.explosionTextures;
   }
 
-  private animate(durationMs: number, frame: (t: number) => void, done: () => void): void {
-    const animation: Animation = { start: performance.now(), durationMs, frame, done };
+  private animate(durationMs: number, frame: (t: number) => void, done: () => void): Animation {
+    const animation: Animation = {
+      start: performance.now(),
+      durationMs: Math.max(1, durationMs),
+      frame,
+      done,
+    };
     this.animations.push(animation);
     frame(0);
+    return animation;
+  }
+
+  private cancel(animation: Animation): void {
+    this.animations = this.animations.filter((a) => a !== animation);
+    animation.done();
   }
 
   private readonly tick = (): void => {
@@ -127,6 +204,17 @@ export class EffectsLayer {
       return false;
     });
   };
+}
+
+/** Place un sprite selon l'état de sa particule (`null` : caché). Tailles en cases. */
+function showParticle(sprite: Sprite, frame: ParticleFrame | null): void {
+  sprite.visible = frame !== null && frame.alpha > 0;
+  if (!frame || !sprite.visible) return;
+  sprite.position.set(frame.x, frame.y);
+  sprite.scale.set(frame.width / sprite.texture.width, frame.height / sprite.texture.height);
+  sprite.rotation = frame.rotation;
+  sprite.alpha = frame.alpha;
+  sprite.tint = frame.tint;
 }
 
 function clamp01(value: number): number {

@@ -15,6 +15,8 @@ import {
   type Camera,
   type FogStyle,
 } from '../../../core/models/game-state.model';
+import type { BoardEvent } from '../../../core/models/sync-message.model';
+import { FOCUS_MOVE_MS } from '../../../renderer/camera-focus';
 import { computeLayout, visibleCells, type CellPoint } from '../../../renderer/layout';
 import { RENDER_STYLES } from '../../../renderer/render-style';
 import { AnimatedMap } from '../../../shared/animated-map';
@@ -24,8 +26,12 @@ import { GameStore } from '../state/game.store';
 import { resizeFrame, type FrameCorner } from './frame-resize';
 import {
   BRUSH_SIZE,
+  EXPLOSION_RADIUS,
+  FOCUS_SECONDS,
+  FOCUS_ZONE,
   PreviewToolbar,
   type BrushMode,
+  type EffectTool,
   type PreviewSection,
 } from './preview-toolbar';
 
@@ -50,14 +56,29 @@ const CORNER_LABELS: Record<FrameCorner, string> = {
  */
 const STROKE_POINT_STEP = 0.1;
 
+/** Couleur du ping sur la TV. */
+const PING_COLOR = '#3b82f6';
+
+/** Rectangle dans l'aperçu, en pixels. */
+interface PxRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 /**
  * Aperçu côté MJ de la carte en édition (affichée ou non) : toute la grille,
  * avec un cadre autour de la zone que la TV en montre.
  *
  * La section ouverte de la barre d'outils, à droite, décide de l'outil :
  * « Affichage » pour déplacer ce cadre (et, en mode « Précis », le
- * redimensionner par ses coins), « Brouillard » pour le pinceau. Tout fermé,
- * l'aperçu est en lecture seule.
+ * redimensionner par ses coins), « Brouillard » pour le pinceau, « Effets »
+ * pour les effets (ping, focus, explosion au clic). Tout fermé, l'aperçu est en
+ * lecture seule.
+ *
+ * Les effets partent vers la TV et sont rejoués ici ; le focus, qui déplace
+ * la caméra de la TV, est montré par la zone qu'il affiche.
  */
 @Component({
   selector: 'app-board-preview',
@@ -97,7 +118,7 @@ const STROKE_POINT_STEP = 0.1;
           class="relative h-[50vh] min-w-0 flex-1 touch-none overflow-hidden"
           [class.cursor-grab]="tool() === 'pan' && preciseUnavailable() === null && !drag()"
           [class.cursor-grabbing]="drag()?.kind === 'pan'"
-          [class.cursor-crosshair]="(tool() === 'paint' || tool() === 'erase') && store.selectedMap()"
+          [class.cursor-crosshair]="crosshair()"
           (pointerdown)="startDrag($event)"
           (pointermove)="onPointerMove($event)"
           (pointerup)="endDrag()"
@@ -127,6 +148,43 @@ const STROKE_POINT_STEP = 0.1;
                 (pointerdown)="startResize(corner, $event)"
               ></div>
             }
+          }
+
+          <!-- Focus : zone que la TV affiche en ce moment, et celle qu'elle afficherait au clic. -->
+          @if (focusActive(); as zone) {
+            <div
+              data-focus-active
+              class="pointer-events-none absolute border-2 border-amber-400 bg-amber-400/10"
+              [style.left.px]="zone.left"
+              [style.top.px]="zone.top"
+              [style.width.px]="zone.width"
+              [style.height.px]="zone.height"
+            >
+              <span class="absolute top-1 left-1 rounded bg-amber-400 px-1 text-xs font-semibold text-black">
+                Focus
+              </span>
+            </div>
+          }
+          @if (focusPreview(); as zone) {
+            <div
+              data-focus-preview
+              class="pointer-events-none absolute border-2 border-dashed border-white/80 shadow-[0_0_0_1px_rgb(0_0_0/0.6)]"
+              [style.left.px]="zone.left"
+              [style.top.px]="zone.top"
+              [style.width.px]="zone.width"
+              [style.height.px]="zone.height"
+            ></div>
+          }
+
+          @if (explosionCursor(); as cursor) {
+            <div
+              data-explosion-cursor
+              class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-orange-400 bg-orange-500/10"
+              [style.left.px]="cursor.left"
+              [style.top.px]="cursor.top"
+              [style.width.px]="cursor.size"
+              [style.height.px]="cursor.size"
+            ></div>
           }
 
           <!-- Pinceau sous le pointeur : cœur (trait plein) et étendue du fondu (pointillés). -->
@@ -160,6 +218,11 @@ const STROKE_POINT_STEP = 0.1;
           [(brushSize)]="brushSize"
           [(fade)]="fade"
           [viewUnavailable]="preciseUnavailable()"
+          [(effect)]="effect"
+          [(focusSeconds)]="focusSeconds"
+          [(explosionRadius)]="explosionRadius"
+          [effectsUnavailable]="effectsUnavailable()"
+          (shake)="playEffect($event)"
         />
       </div>
     </section>
@@ -167,8 +230,10 @@ const STROKE_POINT_STEP = 0.1;
 })
 export class BoardPreview {
   protected readonly store = inject(GameStore);
-  private readonly boardViewport = inject(DmSyncEffects).boardViewport;
+  private readonly dmSync = inject(DmSyncEffects);
+  private readonly boardViewport = this.dmSync.boardViewport;
   private readonly surface = viewChild.required<ElementRef<HTMLElement>>('surface');
+  private readonly canvas = viewChild.required(BoardCanvas);
 
   protected readonly corners = CORNERS;
   protected readonly cornerLabels = CORNER_LABELS;
@@ -180,6 +245,9 @@ export class BoardPreview {
   protected readonly fogStyle = signal<FogStyle>('darkness');
   protected readonly brushSize = signal(BRUSH_SIZE.default);
   protected readonly fade = signal(DEFAULT_FOG_FADE);
+  protected readonly effect = signal<EffectTool>('ping');
+  protected readonly focusSeconds = signal(FOCUS_SECONDS.default);
+  protected readonly explosionRadius = signal(EXPLOSION_RADIUS.default);
   /** Position du pointeur dans l'aperçu, en pixels (`null` hors de l'aperçu). */
   protected readonly hover = signal<{ x: number; y: number } | null>(null);
 
@@ -187,7 +255,7 @@ export class BoardPreview {
   private readonly isAnimated = computed(() => this.store.selectedView().animated !== null);
 
   /** Outil actif sur l'aperçu, décidé par la section ouverte de la barre d'outils. */
-  protected readonly tool = computed<'pan' | BrushMode | null>(() => {
+  protected readonly tool = computed<'pan' | BrushMode | EffectTool | null>(() => {
     // Carte animée : ni cadrage ni brouillard, l'aperçu reste en lecture seule.
     if (this.isAnimated()) return null;
     switch (this.section()) {
@@ -195,9 +263,34 @@ export class BoardPreview {
         return 'pan';
       case 'fog':
         return this.brushMode();
+      case 'effects':
+        return this.effectsUnavailable() ? null : this.effect();
       default:
         return null;
     }
+  });
+
+  /** Outils qui visent un point précis de la carte. */
+  protected readonly crosshair = computed(() => {
+    switch (this.tool()) {
+      case 'paint':
+      case 'erase':
+        return this.store.selectedMap() !== null;
+      case 'ping':
+      case 'focus':
+      case 'explosion':
+        return true;
+      default:
+        return false;
+    }
+  });
+
+  /** Zone soufflée par une explosion sous le pointeur : centre et diamètre, en pixels. */
+  protected readonly explosionCursor = computed(() => {
+    const hover = this.hover();
+    const layout = this.previewLayout();
+    if (this.tool() !== 'explosion' || !hover || !layout) return null;
+    return { left: hover.x, top: hover.y, size: 2 * this.explosionRadius() * layout.cellPx };
   });
 
   /** Taille de l'aperçu, en pixels CSS. */
@@ -229,6 +322,34 @@ export class BoardPreview {
   protected readonly onScreen = computed(() => {
     const selected = this.store.selectedMap();
     return selected !== null && selected.id === this.store.activeMap()?.id;
+  });
+
+  /**
+   * Pourquoi les effets ne peuvent pas être joués (`null` : ils le peuvent).
+   * Ils visent un endroit de la carte : celle que voient les joueurs.
+   */
+  protected readonly effectsUnavailable = computed(() => {
+    if (!this.store.selectedMap()) return 'Sélectionnez une carte pour y jouer des effets.';
+    if (!this.onScreen()) return "Affichez cette carte à l'écran pour y jouer des effets.";
+    return null;
+  });
+
+  /** Focus en cours sur la TV : carte visée et caméra (effacé au début du retour). */
+  private readonly activeFocus = signal<{ mapId: string; camera: Camera } | null>(null);
+  private focusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Zone que la TV affiche pendant le focus en cours, en pixels de l'aperçu. */
+  protected readonly focusActive = computed(() => {
+    const focus = this.activeFocus();
+    if (!focus || focus.mapId !== this.store.selectedMap()?.id) return null;
+    return this.boardZone(focus.camera);
+  });
+
+  /** Zone qu'afficherait un focus sur la case survolée (outil Focus). */
+  protected readonly focusPreview = computed(() => {
+    const hover = this.hover();
+    const cell = hover && this.tool() === 'focus' ? this.pxToCell(hover) : null;
+    return cell && this.inGrid(cell) ? this.boardZone(this.focusCameraAt(cell)) : null;
   });
 
   /** Pourquoi la vue de la TV ne peut pas être réglée (`null` : elle peut l'être). */
@@ -280,6 +401,16 @@ export class BoardPreview {
       observer.observe(this.surface().nativeElement);
       destroyRef.onDestroy(() => observer.disconnect());
     });
+    destroyRef.onDestroy(() => clearTimeout(this.focusTimer));
+  }
+
+  /** Envoie l'effet à la TV et le rejoue dans l'aperçu. */
+  protected playEffect(event: BoardEvent): void {
+    this.dmSync.sendEvent(event);
+    // L'aperçu montre toujours toute la carte : le focus y est sans effet,
+    // on encadre plutôt la zone que la TV affiche pendant ce temps.
+    this.canvas().playEffect(event);
+    if (event.kind === 'focus') this.showFocus(event.camera, event.durationMs);
   }
 
   /** Ctrl+Z annule le dernier tracé, sauf dans un champ de saisie (notes…). */
@@ -299,6 +430,12 @@ export class BoardPreview {
         return this.startPaint(event, 'hide');
       case 'erase':
         return this.startPaint(event, 'reveal');
+      case 'ping':
+        return this.playEffectAt(event, 'ping');
+      case 'focus':
+        return this.playEffectAt(event, 'focus');
+      case 'explosion':
+        return this.playEffectAt(event, 'explosion');
       default:
       // Aucune section ouverte : lecture seule.
     }
@@ -363,6 +500,68 @@ export class BoardPreview {
     this.drag.set({ kind: 'paint', strokeId, size, last: cell });
   }
 
+  /** Effet sur la case cliquée (hors de la grille : rien). */
+  private playEffectAt(event: PointerEvent, tool: 'ping' | 'focus' | 'explosion'): void {
+    const cell = this.toCell(event);
+    if (!cell || !this.inGrid(cell)) return;
+    const [x, y] = toPoint(cell);
+
+    switch (tool) {
+      case 'ping':
+        return this.playEffect({ kind: 'ping', x, y, color: PING_COLOR });
+      case 'focus': {
+        const durationMs = this.focusSeconds() * 1000;
+        return this.playEffect({ kind: 'focus', camera: this.focusCameraAt({ x, y }), durationMs });
+      }
+      case 'explosion':
+        return this.playEffect({ kind: 'explosion', x, y, radius: this.explosionRadius() });
+    }
+  }
+
+  /**
+   * Caméra visée par un focus, centrée sur le point. Quand la TV montre toute
+   * la carte, elle zoome pour n'en montrer que `FOCUS_ZONE` (60 %) ; en mode
+   * précis, elle garde son zoom et ne fait que se déplacer.
+   */
+  private focusCameraAt({ x, y }: CellPoint): Camera {
+    const zoom = this.store.preciseView() ? this.store.camera().zoom : 1 / FOCUS_ZONE;
+    return { x, y, zoom };
+  }
+
+  /** Encadre la zone du focus jusqu'à ce que la TV commence à revenir. */
+  private showFocus(camera: Camera, durationMs: number): void {
+    const mapId = this.store.selectedMap()?.id;
+    if (!mapId) return;
+    clearTimeout(this.focusTimer);
+    this.activeFocus.set({ mapId, camera });
+    this.focusTimer = setTimeout(() => this.activeFocus.set(null), FOCUS_MOVE_MS + durationMs);
+  }
+
+  /** Zone de la carte que la TV afficherait avec cette caméra, en pixels de l'aperçu. */
+  private boardZone(camera: Camera): PxRect | null {
+    const viewport = this.boardViewport();
+    const layout = this.previewLayout();
+    if (!viewport || !layout) return null;
+    const zone = visibleCells(
+      viewport.width,
+      viewport.height,
+      this.store.grid(),
+      camera,
+      RENDER_STYLES.board.fit,
+    );
+    return {
+      left: layout.originX + zone.x * layout.cellPx,
+      top: layout.originY + zone.y * layout.cellPx,
+      width: zone.w * layout.cellPx,
+      height: zone.h * layout.cellPx,
+    };
+  }
+
+  private inGrid({ x, y }: CellPoint): boolean {
+    const { cols, rows } = this.store.grid();
+    return x >= 0 && y >= 0 && x <= cols && y <= rows;
+  }
+
   private continuePaint(drag: Extract<Drag, { kind: 'paint' }>, cell: CellPoint): void {
     const step = drag.size * STROKE_POINT_STEP;
     if (Math.hypot(cell.x - drag.last.x, cell.y - drag.last.y) < step) return;
@@ -397,12 +596,17 @@ export class BoardPreview {
 
   /** Position du pointeur dans l'aperçu, en cases. */
   private toCell(event: PointerEvent): CellPoint | null {
+    const rect = this.surface().nativeElement.getBoundingClientRect();
+    return this.pxToCell({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+  }
+
+  /** Point de l'aperçu (en pixels, depuis son coin haut gauche), en cases. */
+  private pxToCell(point: { x: number; y: number }): CellPoint | null {
     const layout = this.previewLayout();
     if (!layout || layout.cellPx === 0) return null;
-    const rect = this.surface().nativeElement.getBoundingClientRect();
     return {
-      x: (event.clientX - rect.left - layout.originX) / layout.cellPx,
-      y: (event.clientY - rect.top - layout.originY) / layout.cellPx,
+      x: (point.x - layout.originX) / layout.cellPx,
+      y: (point.y - layout.originY) / layout.cellPx,
     };
   }
 

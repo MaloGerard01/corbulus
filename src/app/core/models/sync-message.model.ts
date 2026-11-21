@@ -1,11 +1,19 @@
 import type { BoardView } from './board-view.model';
-import type { Shape } from './game-state.model';
+import type { Camera } from './game-state.model';
 
 /** Effets ponctuels : joués une fois, jamais persistés ni rejoués au rechargement. */
 export type BoardEvent =
+  /** Rond qui s'agrandit puis disparaît, centré sur (`x`, `y`) en cases. */
   | { kind: 'ping'; x: number; y: number; color: string }
-  | { kind: 'focus'; shape: Shape; durationMs: number }
-  | { kind: 'shake' };
+  /**
+   * La TV se déplace sur `camera` (zoom compris), y reste `durationMs`, puis
+   * revient à la caméra de l'état. Rien n'est persisté.
+   */
+  | { kind: 'focus'; camera: Camera; durationMs: number }
+  /** Le plateau tremble pendant `durationMs`, en s'écartant d'au plus `amplitude` cases. */
+  | { kind: 'shake'; durationMs: number; amplitude: number }
+  /** Explosion (feu, fumée, onde de choc) centrée sur (`x`, `y`), de rayon `radius`, en cases. */
+  | { kind: 'explosion'; x: number; y: number; radius: number };
 
 /** Taille de la fenêtre du plateau (la TV), en pixels CSS. */
 export interface BoardViewport {

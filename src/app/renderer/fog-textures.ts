@@ -88,8 +88,9 @@ export function cloudPixels(size: number): Uint8ClampedArray<ArrayBuffer> {
  * Bruit fractal périodique (0–1) : somme d'octaves de bruit de valeur, la
  * période doublant et le poids diminuant de moitié à chaque octave.
  * `u` et `v` sont en fraction du motif ; toute valeur est acceptée (périodique).
+ * Aussi utilisé pour la fumée des explosions (explosion-textures.ts).
  */
-function fbm(u: number, v: number, seed: number, octaves: number): number {
+export function fbm(u: number, v: number, seed: number, octaves: number): number {
   let value = 0;
   let total = 0;
   let weight = 0.5;
